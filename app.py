@@ -170,12 +170,19 @@ def developer_dashboard():
             c_name = request.form['college_name']
             c_user = request.form['username']
             c_pass = request.form['password']
+            c_periods = request.form.get('total_periods', 6)
             try:
-                cursor.execute('INSERT INTO admins (college_name, username, password) VALUES (%s, %s, %s)', (c_name, c_user, c_pass))
+                cursor.execute('INSERT INTO admins (college_name, username, password, total_periods) VALUES (%s, %s, %s, %s)', (c_name, c_user, c_pass, c_periods))
                 conn.commit()
             except psycopg2.IntegrityError:
                 conn.rollback()
                 
+        elif action == 'update_college_periods':
+            col_id = request.form['college_id']
+            new_periods = request.form['total_periods']
+            cursor.execute('UPDATE admins SET total_periods=%s WHERE id=%s', (new_periods, col_id))
+            conn.commit()
+            
         elif action == 'update_teacher_dev':
             cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s',
                          (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id']))
@@ -185,7 +192,6 @@ def developer_dashboard():
             cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s',
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id']))
             conn.commit()
-            
     cursor.execute('SELECT * FROM admins')
     colleges = cursor.fetchall()
     
@@ -226,6 +232,14 @@ def developer_dashboard():
             <td><a href="/developer/dashboard?filter_college={c['id']}" style="color:#6f42c1; font-weight:bold; text-decoration:none;" title="Click to filter details">{c['college_name']} 🔍</a></td>
             <td>{c['username']}</td>
             <td>🔑 {c['password']}</td>
+            <td>
+                <form method="POST" style="display:inline; margin:0;">
+                    <input type="hidden" name="action" value="update_college_periods">
+                    <input type="hidden" name="college_id" value="{c['id']}">
+                    <input type="number" name="total_periods" value="{c['total_periods']}" style="width:50px; padding:2px; margin:0;" min="1" max="15">
+                    <button type="submit" style="width:auto; padding:2px 5px; font-size:11px; background:#28a745; margin:0;">Set ⚙️</button>
+                </form>
+            </td>
             <td><a href="/developer/delete/college/{c['id']}" style="color:red; font-weight:bold; text-decoration:none;" onclick="return confirm('Delete College?')">Delete Account ❌</a></td>
         </tr>"""
         
@@ -258,7 +272,6 @@ def developer_dashboard():
                 <a href="/developer/delete/student/{s['id']}" style="color:red; font-weight:bold;" onclick="return confirm('Delete Student?')">Delete ❌</a>
             </td>
         </tr>"""
-
     edit_box = ""
     if edit_t_data:
         edit_box = f"""<div class="card" style="background:#fff3cd;"><h3>📝 Edit Faculty Teacher</h3>
@@ -307,13 +320,14 @@ def developer_dashboard():
                         <input type="text" name="college_name" placeholder="College Name (e.g. Punjab College)" required>
                         <input type="text" name="username" placeholder="Admin Username" required>
                         <input type="text" name="password" placeholder="Admin Password" required>
+                        <input type="number" name="total_periods" placeholder="Total Periods (e.g. 6)" value="6" required>
                         <button type="submit">Create Account</button>
                     </form>
                 </div>
                 <div class="card">
                     <h3>📋 Registered Colleges Accounts</h3>
                     <table>
-                        <thead><tr><th>ID</th><th>College Name</th><th>Username</th><th>Password</th><th>Action</th></tr></thead>
+                        <thead><tr><th>ID</th><th>College Name</th><th>Username</th><th>Password</th><th>Periods Config</th><th>Action</th></tr></thead>
                         <tbody>{college_rows}</tbody>
                     </table>
                 </div>
