@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Teacher Attendance Portal</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
+        .header { background: #28a745; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .logout-btn { color: white; text-decoration: none; font-weight: bold; background: #218838; padding: 8px 15px; border-radius: 5px; }
+        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h3 { margin-top: 0; color: #495057; }
+        .setup-form { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .setup-form select, .setup-form input { padding: 10px; border: 1px solid #ced4da; border-radius: 4px; min-width: 150px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
+        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: left; }
+        th { background-color: #e9ecef; color: #495057; }
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        .radio-group { display: flex; gap: 15px; }
+        .radio-group label { cursor: pointer; font-weight: bold; }
+        .present-lbl { color: #28a745; }
+        .absent-lbl { color: #dc3545; }
+        .save-btn { background: #28a745; color: white; border: none; padding: 12px 25px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; margin-top: 20px; width: 100%; }
+        .save-btn:hover { background: #218838; }
+        .info-bar { background: #e2f0d9; color: #385723; padding: 12px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>🧑‍🏫 Teacher Portal | Book: {{ subject }}</h1>
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <span style="font-weight: bold;">Welcome, {{ teacher_name }}</span>
+            <a href="/logout" class="logout-btn">Log Out ➡️</a>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>🔍 Class / Program Aur Part Select Karein</h3>
+        <form method="GET" action="/teacher/dashboard" class="setup-form">
+            <select name="program" required>
+                <option value="">-- Select Program --</option>
+                <option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option>
+                <option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option>
+                <option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option>
+                <option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option>
+                <option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option>
+                <option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option>
+                <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option>
+                <option value="FA-IT" {% if selected_program == 'FA-IT' %}selected{% endif %}>FA-IT</option>
+                <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option>
+                <option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option>
+                <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option>
+            </select>
+
+            <select name="part" required>
+                <option value="">-- Select Part / Semester --</option>
+                <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option>
+                <option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option>
+                <option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option>
+                <option value="Semester-2" {% if selected_part == 'Semester-2' %}selected{% endif %}>Semester-2</option>
+                <option value="Semester-3" {% if selected_part == 'Semester-3' %}selected{% endif %}>Semester-3</option>
+                <option value="Semester-4" {% if selected_part == 'Semester-4' %}selected{% endif %}>Semester-4</option>
+                <option value="Semester-5" {% if selected_part == 'Semester-5' %}selected{% endif %}>Semester-5</option>
+                <option value="Semester-6" {% if selected_part == 'Semester-6' %}selected{% endif %}>Semester-6</option>
+                <option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option>
+                <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option>
+            </select>
+            
+            <input type="date" name="attendance_date" value="{{ selected_date }}" required>
+            
+            <button type="submit" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-weight:bold;">List Load Karein</button>
+        </form>
+    </div>
+
+    {% if students %}
+    <div class="card">
+        <div class="info-bar">
+            📍 Selected: {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }}
+        </div>
+        
+        <form method="POST" action="/teacher/save_attendance">
+            <input type="hidden" name="program" value="{{ selected_program }}">
+            <input type="hidden" name="part" value="{{ selected_part }}">
+            <input type="hidden" name="attendance_date" value="{{ selected_date }}">
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Roll No</th>
+                        <th>Student Name</th>
+                        <th>Father's Name</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in students %}
+                    <tr>
+                        <td><b>{{ student.roll_no }}</b></td>
+                        <td>{{ student.student_name }}</td>
+                        <td>{{ student.father_name }}</td>
+                        <td>
+                            <div class="radio-group">
+                                <label class="present-lbl">
+                                    <input type="radio" name="status_{{ student.roll_no }}" value="Present" checked> Present
+                                </label>
+                                <label class="absent-lbl">
+                                    <input type="radio" name="status_{{ student.roll_no }}" value="Absent"> Absent
+                                </label>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <button type="submit" class="save-btn">💾 Attendance System Mein Save Karein</button>
+        </form>
+    </div>
+    {% elif selected_program and selected_part %}
+    <div class="card" style="text-align: center; color: #dc3545; font-weight: bold; padding: 30px;">
+        ⚠️ Is Class ({{ selected_program }} - {{ selected_part }}) mein abhi tak koi student maujood nahi hai!
+    </div>
+    {% endif %}
+
+</body>
+</html>
