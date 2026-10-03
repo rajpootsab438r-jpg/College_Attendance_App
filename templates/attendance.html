@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Teacher Attendance Portal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
         .header { background: #28a745; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
@@ -15,14 +16,44 @@
         th, td { border: 1px solid #dee2e6; padding: 12px; text-align: left; }
         th { background-color: #e9ecef; color: #495057; }
         tr:nth-child(even) { background-color: #f8f9fa; }
-        .radio-group { display: flex; gap: 15px; }
-        .radio-group label { cursor: pointer; font-weight: bold; }
-        .present-lbl { color: #28a745; }
-        .absent-lbl { color: #dc3545; }
-        .save-btn { background: #28a745; color: white; border: none; padding: 12px 25px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; margin-top: 20px; width: 100%; }
-        .save-btn:hover { background: #218838; }
         .info-bar { background: #e2f0d9; color: #385723; padding: 12px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
+        
+        /* Dynamic Status Badges */
+        .badge-present { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
+        .badge-absent { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
+        
+        /* Layout Buttons Grid */
+        .action-container { display: flex; gap: 10px; }
+        .btn-action-p { background-color: #28a745; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn-action-p:hover { background-color: #218838; }
+        .btn-action-a { background-color: #dc3545; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn-action-a:hover { background-color: #c82333; }
     </style>
+    
+    <!-- Instant AJAX Save Script -->
+    <script>
+        function markInstantAttendance(studentRoll, targetStatus) {
+            var selectedDate = document.getElementById('global_date').value;
+            
+            fetch('/teacher/quick_attendance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ roll: studentRoll, status: targetStatus, date: selectedDate })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    var statusCell = document.getElementById('status-box-' + studentRoll);
+                    if(targetStatus === 'Present') {
+                        statusCell.innerHTML = '<span class="badge-present">Present ✅</span>';
+                    } else {
+                        statusCell.innerHTML = '<span class="badge-absent">Absent ❌</span>';
+                    }
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    </script>
 </head>
 <body>
 
@@ -39,15 +70,15 @@
         <form method="GET" action="/teacher/dashboard" class="setup-form">
             <select name="program" required>
                 <option value="">-- Select Program --</option>
+                <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option>
+                <option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option>
+                <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option>
+                <option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option>
+                <option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option>
                 <option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option>
                 <option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option>
                 <option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option>
                 <option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option>
-                <option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option>
-                <option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option>
-                <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option>
-                <option value="FA-IT" {% if selected_program == 'FA-IT' %}selected{% endif %}>FA-IT</option>
-                <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option>
                 <option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option>
                 <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option>
             </select>
@@ -66,7 +97,7 @@
                 <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option>
             </select>
             
-            <input type="date" name="attendance_date" value="{{ selected_date }}" required>
+            <input type="date" id="global_date" name="attendance_date" value="{{ selected_date }}" required>
             
             <button type="submit" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-weight:bold;">List Load Karein</button>
         </form>
@@ -78,43 +109,43 @@
             📍 Selected: {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }}
         </div>
         
-        <form method="POST" action="/teacher/save_attendance">
-            <input type="hidden" name="program" value="{{ selected_program }}">
-            <input type="hidden" name="part" value="{{ selected_part }}">
-            <input type="hidden" name="attendance_date" value="{{ selected_date }}">
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Roll No</th>
-                        <th>Student Name</th>
-                        <th>Father's Name</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for student in students %}
-                    <tr>
-                        <td><b>{{ student.roll_no }}</b></td>
-                        <td>{{ student.student_name }}</td>
-                        <td>{{ student.father_name }}</td>
-                        <td>
-                            <div class="radio-group">
-                                <label class="present-lbl">
-                                    <input type="radio" name="status_{{ student.roll_no }}" value="Present" checked> Present
-                                </label>
-                                <label class="absent-lbl">
-                                    <input type="radio" name="status_{{ student.roll_no }}" value="Absent"> Absent
-                                </label>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            
-            <button type="submit" class="save-btn">💾 Attendance System Mein Save Karein</button>
-        </form>
+        <table>
+            <thead>
+                <tr>
+                    <th>Roll No</th>
+                    <th>Student Name</th>
+                    <th>Father's Name</th>
+                    <th>Current Status</th>
+                    <th>Present/Absent Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for student in students %}
+                <tr>
+                    <td><b>{{ student.roll_no }}</b></td>
+                    <td>{{ student.student_name }}</td>
+                    <td>{{ student.father_name }}</td>
+                    <td id="status-box-{{ student.roll_no }}">
+                        {% if student.saved_status == 'Present' %}
+                            <span class="badge-present">Present ✅</span>
+                        {% else %}
+                            <span class="badge-absent">Absent ❌</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="action-container">
+                            <button type="button" class="btn-action-p" onclick="markInstantAttendance('{{ student.roll_no }}', 'Present')">Present</button>
+                            <button type="button" class="btn-action-a" onclick="markInstantAttendance('{{ student.roll_no }}', 'Absent')">Absent</button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <div style="margin-top: 25px; text-align: center; font-size: 13px; color: #28a745; font-weight: bold;">
+            ⚡ Live Processing Active: Buttons click karte hi data automatic background mein save ho jata hai.
+        </div>
     </div>
     {% elif selected_program and selected_part %}
     <div class="card" style="text-align: center; color: #dc3545; font-weight: bold; padding: 30px;">

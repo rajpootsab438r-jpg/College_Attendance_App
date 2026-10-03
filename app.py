@@ -4,46 +4,78 @@ from psycopg2.extras import DictCursor
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = "attendance_secret_key_123"
+# 🏷️ Branded security key signature context mapped to Çukur Systems architecture
+app.secret_key = "attendance_cukur_secret_key_123"
 
 # 🌍 Neon.tech Database Connection Function
 def get_db_connection():
     DATABASE_URL = "postgresql://neondb_owner:npg_M7bJcCfdkN3e@ep-dry-cherry-b5iifiwq-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
     conn = psycopg2.connect(DATABASE_URL)
     return conn
-# 1. Welcome Portal
+
+# 1. Welcome Portal (With High-Performance Video Background Engine & Çukur Branded Identity)
 @app.route('/')
 def welcome():
-    return """
+    # 🎥 High-Speed Open-Source Video CDN Direct MP4 streaming pipeline URL
+    VIDEO_URL = "https://zencdn.net"
+    
+    return f"""
     <html>
         <head>
-            <title>College Attendance System</title>
+            <title>College Attendance System | Çukur</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
             <style>
-                body { 
-                    font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; 
-                    background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url('https://unsplash.com');
-                    background-size: cover; background-position: center; background-attachment: fixed; padding-top: 100px;
-                }
-                .container { background: rgba(255, 255, 255, 0.95); padding: 40px; display: inline-block; border-radius: 16px; box-shadow: 0px 8px 30px rgba(0,0,0,0.3); width: 100%; max-width: 400px; }
-                h1 { color: #2c3e50; font-size: 26px; margin-bottom: 5px; }
-                p { color: #7f8c8d; font-size: 15px; margin-bottom: 25px; }
-                .btn { display: block; padding: 14px; margin: 12px 0; font-size: 16px; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; transition: all 0.2s ease; }
-                .btn-admin { background-color: #007bff; }
-                .btn-admin:hover { background-color: #0056b3; }
-                .btn-teacher { background-color: #28a745; }
-                .btn-teacher:hover { background-color: #218838; }
-                .btn-dev { background-color: #6f42c1; }
-                .btn-dev:hover { background-color: #5a32a3; }
+                body {{ 
+                    font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 0;
+                    overflow: hidden; height: 100vh; display: flex; justify-content: center; align-items: center;
+                    background-color: #2c3e50;
+                }}
+                /* Full Screen Video Engine Core Hardware Settings */
+                #bg-video {{
+                    position: fixed; right: 0; bottom: 0; min-width: 100%; min-height: 100%;
+                    width: auto; height: auto; z-index: -2; object-fit: cover;
+                }}
+                /* Professional depth contrast transparency mask layering overlay */
+                .overlay {{
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                    background: linear-gradient(135deg, rgba(44, 62, 80, 0.7), rgba(0, 0, 0, 0.65)); 
+                    z-index: -1;
+                }}
+                .container {{ 
+                    background: rgba(255, 255, 255, 0.94); padding: 40px; border-radius: 16px; 
+                    box-shadow: 0px 15px 35px rgba(0,0,0,0.4); width: 90%; max-width: 350px; z-index: 1;
+                    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+                    border: 1px solid rgba(255,255,255,0.2);
+                    box-sizing: border-box;
+                }}
+                h1 {{ color: #1a252f; font-size: 24px; margin-top: 0; margin-bottom: 5px; font-weight: 700; }}
+                p {{ color: #7f8c8d; font-size: 15px; margin-bottom: 25px; }}
+                .btn {{ display: block; padding: 14px; margin: 12px 0; font-size: 16px; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; transition: all 0.2s ease-in-out; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }}
+                .btn-admin {{ background-color: #007bff; }}
+                .btn-admin:hover {{ background-color: #0056b3; transform: translateY(-2px); }}
+                .btn-teacher {{ background-color: #28a745; }}
+                .btn-teacher:hover {{ background-color: #218838; transform: translateY(-2px); }}
+                .btn-dev {{ background-color: #6f42c1; }}
+                .btn-dev:hover {{ background-color: #5a32a3; transform: translateY(-2px); }}
             </style>
         </head>
         <body>
+            <!-- Autoplay configuration setup using explicit video properties mapping -->
+            <video autoplay muted loop playsinline preload="auto" id="bg-video">
+                <source src="{VIDEO_URL}" type="video/mp4">
+            </video>
+            <div class="overlay"></div>
+
             <div class="container">
                 <h1>🏫 College Attendance Portal</h1>
                 <p>Select your module to continue</p>
                 <a href="/login/admin" class="btn btn-admin">👑 College Admin Entry</a>
                 <a href="/login/teacher" class="btn btn-teacher">🧑‍🏫 Faculty Teacher Entry</a>
                 <a href="/login/developer" class="btn btn-dev">Super Developer Portal</a>
-                <div style="margin-top: 15px; font-size: 13px; color: #555; font-weight: 500;"> Support/WhatsApp: 03426600749</div>
+                <div style="margin-top: 20px; font-size: 13px; color: #555; font-weight: 600;"> Support/WhatsApp: 03426600749</div>
+                
+                <!-- 🏷️ Branded Signature Map Line Context -->
+                <div style="margin-top: 10px; font-size: 14px; color: #6f42c1; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
             </div>
         </body>
     </html>
@@ -186,6 +218,7 @@ def developer_dashboard():
     if edit_s_id:
         cursor.execute('SELECT * FROM students WHERE id=%s', (edit_s_id,))
         edit_s_data = cursor.fetchone()
+        
     college_rows = ""
     for c in colleges:
         college_rows += f"""<tr>
@@ -304,6 +337,7 @@ def developer_dashboard():
     </html>
     """
 
+# Developer Delete Endpoints
 @app.route('/developer/delete/college/<int:id>')
 def dev_delete_college(id):
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
@@ -367,11 +401,21 @@ def admin_dashboard():
             cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s AND college_id=%s',
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id'], college_id))
             conn.commit()
+        elif action == 'delete_teacher':
+            teacher_id = request.form.get('id')
+            cursor.execute('DELETE FROM teachers WHERE id=%s AND college_id=%s', (teacher_id, college_id))
+            conn.commit()
+        elif action == 'delete_student':
+            student_id = request.form.get('id')
+            cursor.execute('DELETE FROM students WHERE id=%s AND college_id=%s', (student_id, college_id))
+            conn.commit()
             
     cursor.execute('SELECT * FROM students WHERE college_id = %s', (college_id,))
     raw_students = cursor.fetchall()
     cursor.execute('SELECT * FROM teachers WHERE college_id = %s', (college_id,))
-    teachers = cursor.fetchall()
+    raw_teachers = cursor.fetchall()
+    
+    teachers = [dict(t) for t in raw_teachers]
     
     students = []
     for s in raw_students:
@@ -396,46 +440,57 @@ def teacher_dashboard():
     selected_part = request.args.get('part')
     selected_date = request.args.get('attendance_date', datetime.today().strftime('%Y-%m-%d'))
     students = []
+    
     if selected_program and selected_part:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=DictCursor)
         cursor.execute('SELECT * FROM students WHERE program = %s AND part = %s AND college_id = %s', (selected_program, selected_part, college_id))
-        students = cursor.fetchall()
+        raw_students = cursor.fetchall()
+        
+        for s in raw_students:
+            s_dict = dict(s)
+            cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND college_id = %s', (s['roll_no'], selected_date, college_id))
+            att_record = cursor.fetchone()
+            s_dict['saved_status'] = att_record['status'] if att_record else 'Absent'
+            students.append(s_dict)
         conn.close()
+        
     return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, selected_program=selected_program, selected_part=selected_part, selected_date=selected_date)
 
-@app.route('/teacher/save_attendance', methods=['POST'])
-def save_attendance():
-    if 'role' not in session or session['role'] != 'teacher': return redirect(url_for('welcome'))
-    program = request.form.get('program')
-    part = request.form.get('part')
-    att_date = request.form.get('attendance_date')
+# ⚡ Instant Live Save Gateway (AJAX Engine)
+@app.route('/teacher/quick_attendance', methods=['POST'])
+def quick_attendance():
+    if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
+    
+    data = request.get_json()
+    roll = data.get('roll')
+    status = data.get('status')
+    att_date = data.get('date')
     teacher_username = session.get('user')
     college_id = session.get('college_id')
+    
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=DictCursor)
     
-    cursor.execute('SELECT roll_no FROM students WHERE program = %s AND part = %s AND college_id = %s', (program, part, college_id))
-    students = cursor.fetchall()
+    cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND college_id = %s', (roll, att_date, college_id))
+    existing = cursor.fetchone()
     
-    for student in students:
-        roll = student['roll_no']
-        status = request.form.get(f'status_{roll}', 'Absent')
-        cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND college_id = %s', (roll, att_date, college_id))
-        existing = cursor.fetchone()
-        if existing: 
-            cursor.execute('UPDATE attendance SET status = %s, marked_by = %s, created_at = CURRENT_TIMESTAMP WHERE id = %s', (status, teacher_username, existing['id']))
-        else: 
-            cursor.execute('INSERT INTO attendance (student_roll, attendance_date, status, marked_by, college_id) VALUES (%s, %s, %s, %s, %s)', (roll, att_date, status, teacher_username, college_id))
-            
+    if existing: 
+        cursor.execute('UPDATE attendance SET status = %s, marked_by = %s, created_at = CURRENT_TIMESTAMP WHERE id = %s', (status, teacher_username, existing['id']))
+    else: 
+        cursor.execute('INSERT INTO attendance (student_roll, attendance_date, status, marked_by, college_id) VALUES (%s, %s, %s, %s, %s)', (roll, att_date, status, teacher_username, college_id))
+        
     conn.commit()
     conn.close()
-    return redirect(url_for('teacher_dashboard', program=program, part=part, attendance_date=att_date))
+    return {"status": "success", "current_status": status}
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('welcome'))
+
+# 🚀 Top-level application context instance global definition mapped for Vercel deployment stability
+application = app
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7860)

@@ -25,16 +25,17 @@ def reset_and_setup_database():
         )
     """)
     
-    # 2. Teachers Table
+    # 2. Teachers Table (Unique constraint id + college_id par lagayi taake har college ka apna independent data ho)
     cursor.execute("""
         CREATE TABLE teachers (
             id SERIAL PRIMARY KEY,
-            teacher_id TEXT UNIQUE NOT NULL,
+            teacher_id TEXT NOT NULL,
             name TEXT NOT NULL,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             subject TEXT NOT NULL,
-            college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE
+            college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE,
+            UNIQUE(teacher_id, college_id)
         )
     """)
     
@@ -53,7 +54,7 @@ def reset_and_setup_database():
         )
     """)
     
-    # 4. Attendance Table (Auto Time Tracking log)
+    # 4. Attendance Table (Isme students table ke sath composite foreign key lagayi taake student delete hote hi attendance khud ud jaye)
     cursor.execute("""
         CREATE TABLE attendance (
             id SERIAL PRIMARY KEY,
@@ -62,7 +63,8 @@ def reset_and_setup_database():
             status TEXT,
             marked_by TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE
+            college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_roll, college_id) REFERENCES students(roll_no, college_id) ON DELETE CASCADE
         )
     """)
     
@@ -74,7 +76,7 @@ def reset_and_setup_database():
         
     conn.commit()
     conn.close()
-    print("🚀 Fresh Online PostgreSQL Database ready ho gaya hai!")
+    print("🚀 Fresh Online PostgreSQL Database with Cascade Auto-Delete ready ho gaya hai!")
 
 if __name__ == "__main__":
     reset_and_setup_database()
