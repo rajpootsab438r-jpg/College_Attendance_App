@@ -422,11 +422,7 @@ def teacher_dashboard():
     selected_program = request.args.get('program')
     selected_part = request.args.get('part')
     selected_date = request.args.get('attendance_date', datetime.today().strftime('%Y-%m-%d'))
-    
-    selected_period = request.args.get('period_no')
-    if not selected_period or selected_period == 'None':
-        selected_period = '1'
-        
+    selected_period = request.args.get('period_no', '1')
     students = []
     
     conn = get_db_connection()
@@ -445,7 +441,8 @@ def teacher_dashboard():
             cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
                            (s['roll_no'], selected_date, int(selected_period), college_id))
             att_record = cursor.fetchone()
-            s_dict['saved_status'] = att_record['status'] if att_record else 'Absent'
+            # 🛠️ FIXED: Agar record nahi hai, to default status bilkul khali (empty string) rahega
+            s_dict['saved_status'] = att_record['status'] if att_record else ''
             students.append(s_dict)
             
     conn.close()
@@ -453,6 +450,7 @@ def teacher_dashboard():
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods)
 
+# ⚡ Instant Live Save Gateway (AJAX Engine)
 @app.route('/teacher/quick_attendance', methods=['POST'])
 def quick_attendance():
     if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
@@ -461,10 +459,7 @@ def quick_attendance():
     roll = data.get('roll')
     status = data.get('status')
     att_date = data.get('date')
-    
-    raw_period = data.get('period', 1)
-    period_no = int(raw_period) if raw_period and str(raw_period).isdigit() else 1
-    
+    period_no = int(data.get('period', 1))
     teacher_username = session.get('user')
     college_id = session.get('college_id')
     
