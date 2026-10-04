@@ -1,17 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html {% if current_lang == 'ur' %}dir="rtl" lang="ur"{% else %}dir="ltr" lang="en"{% endif %}>
 <head> 
     <title>Admin Dashboard</title> 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style> 
-        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; } 
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; } 
         .header { background: #343a40; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; } 
         .header h1 { margin: 0; font-size: 24px; } 
         .logout-btn { color: #ffc107; text-decoration: none; font-weight: bold; } 
         .grid { display: flex; gap: 20px; flex-wrap: wrap; } 
-        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); flex: 1; min-width: 300px; } 
+        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); flex: 1; min-width: 300px; position: relative; } 
         h3 { margin-top: 0; color: #495057; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; } 
-        input, select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; } 
+        input, select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; } 
         button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 5px; } 
         button:hover { background: #0056b3; } 
         .btn-success { background: #28a745; } 
@@ -21,7 +21,7 @@
         .filter-form-bar button { margin: 0; width: auto; padding: 10px 20px; }
         .info-bar { background: #e8f4fd; color: #1d4ed8; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-weight: bold; font-size: 15px; border: 1px solid #bfdbfe; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; } 
-        th, td { border: 1px solid #dee2e6; padding: 10px; text-align: left; } 
+        th, td { border: 1px solid #dee2e6; padding: 10px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; } 
         th { background-color: #e9ecef; color: #495057; } 
         tr:nth-child(even) { background-color: #f8f9fa; } 
         .full-width { flex: 1 1 100%; } 
@@ -29,7 +29,9 @@
         .del-btn:hover { background: #bd2130; } 
         .view-pass-btn { background: none; border: none; color: #007bff; cursor: pointer; font-size: 12px; font-weight: bold; padding: 0; margin-left: 5px; text-decoration: underline; } 
         .password-container { position: relative; width: 100%; } 
-        .toggle-eye { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; user-select: none; color: #666; } 
+        .toggle-eye { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; user-select: none; color: #666; } 
+        .lang-switcher-bar { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 25px; top: 20px; }
+        .lang-btn { background: #f1f5f9; color: #495057; border: 1px solid #ced4da; padding: 5px 12px; font-weight: bold; border-radius: 15px; text-decoration: none; font-size: 11px; }
     </style> 
     <script> 
         function togglePassword(id) { 
@@ -58,17 +60,20 @@
 </head>
 <body>
 <div class="header"> 
-    <h1>👑 Admin Panel | {{ college_name }}</h1> 
-    <div style="color: white; font-weight: bold;">Logged in as: <span style="color:#ffc107;">{{ current_user }}</span></div> 
-    <a href="/logout" class="logout-btn">Log Out ➡️</a>
+    <h1>👑 {% if current_lang == 'ur' %}ایڈمن پینل | {{ college_name }}{% else %}Admin Panel | {{ college_name }}{% endif %}</h1> 
+    <div style="color: white; font-weight: bold;">{% if current_lang == 'ur' %}لاگ ان اکاؤنٹ: {% else %}Logged in as: {% endif %}<span style="color:#ffc107;">{{ current_user }}</span></div> 
+    <a href="/logout" class="logout-btn">{% if current_lang == 'ur' %}لاگ آؤٹ ➡️{% else %}Log Out ➡️{% endif %}</a>
 </div>
 <div class="grid" style="margin-bottom: 20px;"> 
     <div class="card"> 
-        <h3>⚙️ Admin Username Change Karein</h3> 
+        <div class="lang-switcher-bar">
+            <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵کینسی{% else %}English 🇬🇧{% endif %}</a>
+        </div>
+        <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن کا یوزر نیم تبدیل کریں{% else %}⚙️ Change Admin Username{% endif %}</h3> 
         <form method="POST" action="/admin/dashboard"> 
             <input type="hidden" name="action" value="change_username"> 
-            <input type="text" name="new_username" placeholder="Naya Username Likhein" autocomplete="off" required> 
-            <button type="submit" class="btn-success">Username Update Karein</button> 
+            <input type="text" name="new_username" placeholder="{% if current_lang == 'ur' %}نیا یوزر نیم لکھیں{% else %}Enter New Username{% endif %}" autocomplete="off" required> 
+            <button type="submit" class="btn-success">{% if current_lang == 'ur' %}یوزر نیم اپڈیٹ کریں{% else %}Update Username{% endif %}</button> 
         </form> 
     </div>
 </div>
@@ -76,32 +81,31 @@
 <div class="grid"> 
     <!-- Naya Teacher Register Form --> 
     <div class="card"> 
-        <h3>🧑‍🏫 Naya Teacher Register Karein</h3> 
+        <h3>{% if current_lang == 'ur' %}🧑‍🏫 نیا ٹیچر رجسٹر کریں{% else %}🧑‍🏫 Register New Teacher{% endif %}</h3> 
         <form method="POST" action="/admin/dashboard"> 
             <input type="hidden" name="action" value="add_teacher"> 
-            <input type="text" name="teacher_id" placeholder="Teacher ID (Optional)" autocomplete="off"> 
-            <input type="text" name="name" placeholder="Teacher Ka Naam" autocomplete="off" required> 
-            <input type="text" name="username" placeholder="Login Username" autocomplete="off" required> 
+            <input type="text" name="teacher_id" placeholder="{% if current_lang == 'ur' %}ٹیچر آئی ڈی (اختیاری){% else %}Teacher ID (Optional){% endif %}" autocomplete="off"> 
+            <input type="text" name="name" placeholder="{% if current_lang == 'ur' %}ٹیچر کا نام{% else %}Teacher Name{% endif %}" autocomplete="off" required> 
+            <input type="text" name="username" placeholder="{% if current_lang == 'ur' %}لاگ ان یوزر نیم{% else %}Login Username{% endif %}" autocomplete="off" required> 
             <div class="password-container"> 
-                <input type="password" id="add_teacher_password" name="password" placeholder="Login Password" autocomplete="off" required> 
+                <input type="password" id="add_teacher_password" name="password" placeholder="{% if current_lang == 'ur' %}لاگ ان پاس ورڈ{% else %}Login Password{% endif %}" autocomplete="off" required> 
                 <span id="eye-icon-add_teacher_password" class="toggle-eye" onclick="toggleInputPassword('add_teacher_password')">👁️</span> 
             </div> 
-            <input type="text" name="subject" placeholder="Assigned Subject/Book (Optional)" autocomplete="off"> 
-            <button type="submit">Teacher Add Karein</button> 
+            <input type="text" name="subject" placeholder="{% if current_lang == 'ur' %}مختص کردہ مضمون / کتاب{% else %}Assigned Subject / Book{% endif %}" autocomplete="off"> 
+            <button type="submit">{% if current_lang == 'ur' %}ٹیچر شامل کریں{% else %}Add Teacher{% endif %}</button> 
         </form> 
     </div>
-
     <!-- Naya Student Add Form --> 
     <div class="card"> 
-        <h3>📋 Naya Student Add Karein</h3> 
+        <h3>{% if current_lang == 'ur' %}📋 نیا طالب علم شامل کریں{% else %}📋 Add New Student{% endif %}</h3> 
         <form method="POST" action="/admin/dashboard"> 
             <input type="hidden" name="action" value="add_student"> 
-            <input type="text" name="roll_no" placeholder="Roll Number" autocomplete="off" required> 
-            <input type="text" name="student_name" placeholder="Student Ka Naam" autocomplete="off" required> 
-            <input type="text" name="father_name" placeholder="Walid Ka Naam" autocomplete="off" required> 
-            <input type="text" name="phone_number" placeholder="Ghar Ka Number (Optional)" autocomplete="off"> 
+            <input type="text" name="roll_no" placeholder="{% if current_lang == 'ur' %}رول نمبر{% else %}Roll Number{% endif %}" autocomplete="off" required> 
+            <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required> 
+            <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required> 
+            <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off"> 
             <select name="program" required> 
-                <option value="">-- Select Program --</option> 
+                <option value="">{% if current_lang == 'ur' %}-- پروگرام منتخب کریں --{% else %}-- Select Program --{% endif %}</option> 
                 <option value="FA">FA</option> 
                 <option value="FA IT">FA IT</option> 
                 <option value="FSc">FSc</option> 
@@ -115,7 +119,7 @@
                 <option value="D.Com">D.Com</option> 
             </select> 
             <select name="part" required> 
-                <option value="">-- Select Part / Semester --</option> 
+                <option value="">{% if current_lang == 'ur' %}-- سمسٹر / پارٹ منتخب کریں --{% else %}-- Select Part / Semester --{% endif %}</option> 
                 <option value="Part-1">Part-1</option> 
                 <option value="Part-2">Part-2</option> 
                 <option value="Semester-1">Semester-1</option> 
@@ -127,16 +131,22 @@
                 <option value="Semester-7">Semester-7</option> 
                 <option value="Semester-8">Semester-8</option> 
             </select> 
-            <button type="submit">Student Add Karein</button> 
+            <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button> 
         </form> 
     </div>
 </div>
-
 <div class="card full-width" style="margin-top: 20px;"> 
-    <h3>🧑‍🏫 Registered Teachers Ki List & Passwords Audit</h3> 
+    <h3>{% if current_lang == 'ur' %}🧑‍🏫 رجسٹرڈ اساتذہ کی لسٹ اور پاس ورڈ آڈٹ{% else %}🧑‍🏫 Registered Teachers List & Passwords Audit{% endif %}</h3> 
     <table> 
         <thead> 
-            <tr><th>Teacher ID</th><th>Name</th><th>Username</th><th>Password</th><th>Subject</th><th>Actions</th></tr> 
+            <tr>
+                <th>{% if current_lang == 'ur' %}ٹیچر آئی ڈی{% else %}Teacher ID{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}نام{% else %}Name{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}یوزر نیم{% else %}Username{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}پاس ورڈ{% else %}Password{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}مضمون / کتاب{% else %}Subject{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}ایکشنز{% else %}Actions{% endif %}</th>
+            </tr> 
         </thead> 
         <tbody> 
             {% for teacher in teachers %} 
@@ -153,7 +163,7 @@
                     <form method="POST" action="/admin/dashboard" style="display:inline;"> 
                         <input type="hidden" name="action" value="delete_teacher"> 
                         <input type="hidden" name="id" value="{{ teacher['id'] }}"> 
-                        <button type="submit" class="del-btn" onclick="return confirm('Delete Teacher?')">Delete ❌</button> 
+                        <button type="submit" class="del-btn" onclick="return confirm('Delete Teacher?')">{% if current_lang == 'ur' %}حذف کریں ❌{% else %}Delete ❌{% endif %}</button> 
                     </form> 
                 </td> 
             </tr> 
@@ -162,11 +172,11 @@
     </table>
 </div>
 <div class="card full-width" style="margin-top: 20px;"> 
-    <h3>📋 Registered Students Ki List Filters</h3> 
+    <h3>{% if current_lang == 'ur' %}📋 رجسٹرڈ طلباء کی لسٹ اور فلٹرز{% else %}📋 Registered Students List & Filters{% endif %}</h3> 
     
     <form method="GET" action="/admin/dashboard" class="filter-form-bar">
         <select name="program"> 
-            <option value="">-- All Programs --</option> 
+            <option value="">{% if current_lang == 'ur' %}-- تمام پروگرامز --{% else %}-- All Programs --{% endif %}</option> 
             <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option> 
             <option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option> 
             <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option> 
@@ -180,7 +190,7 @@
             <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option> 
         </select> 
         <select name="part"> 
-            <option value="">-- All Parts/Semesters --</option> 
+            <option value="">{% if current_lang == 'ur' %}-- تمام پارٹس / سمسٹرز --{% else %}-- All Parts/Semesters --{% endif %}</option> 
             <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option> 
             <option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option> 
             <option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option> 
@@ -192,21 +202,30 @@
             <option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option> 
             <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option> 
         </select> 
-        <button type="submit" style="background:#007bff;">Filter Students List 🔍</button>
+        <button type="submit" style="background:#007bff;">{% if current_lang == 'ur' %}لسٹ فلٹر کریں 🔍{% else %}Filter Students List 🔍{% endif %}</button>
         {% if selected_program or selected_part %}
-            <a href="/admin/dashboard" style="color:#dc3545; font-weight:bold; text-decoration:none; margin-left:10px;">Clear Filter ❌</a>
+            <a href="/admin/dashboard" style="color:#dc3545; font-weight:bold; text-decoration:none; margin-left:10px;">{% if current_lang == 'ur' %}فلٹر صاف کریں ❌{% else %}Clear Filter ❌{% endif %}</a>
         {% endif %}
     </form>
 
     {% if selected_program or selected_part %}
     <div class="info-bar">
-        📍 Current Filter Active: {% if selected_program %}{{ selected_program }}{% endif %} {% if selected_part %}({{ selected_part }}){% endif %}
+        {% if current_lang == 'ur' %}📍 فعال فلٹر: {{ selected_program }} ({{ selected_part }}){% else %}📍 Current Filter Active: {{ selected_program }} ({{ selected_part }}){% endif %}
     </div>
     {% endif %}
 
     <table> 
         <thead> 
-            <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Attendance Status (%)</th><th>Actions</th></tr> 
+            <tr>
+                <th>{% if current_lang == 'ur' %}رول نمبر{% else %}Roll No{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}نام{% else %}Name{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}والد کا نام{% else %}Father's Name{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}رابطہ{% else %}Contact{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}پروگرام{% else %}Program{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}سمسٹر{% else %}Part{% endif %}</th>
+                <th>{% if current_lang == 'ur' %}حاضری کا تناسب (%){% else %}Attendance Status (%){% endif %}</th>
+                <th>{% if current_lang == 'ur' %}ایکشنز{% else %}Actions{% endif %}</th>
+            </tr> 
         </thead> 
         <tbody> 
             {% for student in students %} 

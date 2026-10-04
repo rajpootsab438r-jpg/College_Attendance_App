@@ -1,38 +1,34 @@
 <!DOCTYPE html>
-<html>
+<html {% if current_lang == 'ur' %}dir="rtl" lang="ur"{% else %}dir="ltr" lang="en"{% endif %}>
 <head>
     <title>Teacher Attendance Portal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; }
         .header { background: #28a745; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
         .header h1 { margin: 0; font-size: 24px; }
         .logout-btn { color: white; text-decoration: none; font-weight: bold; background: #218838; padding: 8px 15px; border-radius: 5px; }
-        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; position: relative; }
         h3 { margin-top: 0; color: #495057; }
         .setup-form { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
         .setup-form select, .setup-form input { padding: 10px; border: 1px solid #ced4da; border-radius: 4px; min-width: 140px; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
-        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: left; }
+        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; }
         th { background-color: #e9ecef; color: #495057; }
         tr:nth-child(even) { background-color: #f8f9fa; }
         .info-bar { background: #e2f0d9; color: #385723; padding: 12px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
-        
-        /* 🛠️ Beautiful Dynamic Status Indicators */
         .badge-present { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
         .badge-absent { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
-        
         .action-container { display: flex; gap: 10px; }
-        .btn-action-p { background-color: #28a745; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: 0.2s; }
-        .btn-action-p:hover { background-color: #218838; }
-        .btn-action-a { background-color: #dc3545; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: 0.2s; }
-        .btn-action-a:hover { background-color: #c82333; }
+        .btn-action-p { background-color: #28a745; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        .btn-action-a { background-color: #dc3545; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        .lang-switcher-bar { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 20px; top: 20px; }
+        .lang-btn { background: #f1f5f9; color: #28a745; border: 1px solid #28a745; padding: 5px 12px; font-weight: bold; border-radius: 15px; text-decoration: none; font-size: 11px; }
     </style>
     <script>
         function markInstantAttendance(studentRoll, targetStatus) {
             var selectedDate = document.getElementById('global_date').value;
             var selectedPeriod = document.getElementById('global_period').value;
-            
             fetch('/teacher/quick_attendance', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -42,10 +38,11 @@
             .then(data => {
                 if(data.status === 'success') {
                     var statusCell = document.getElementById('status-box-' + studentRoll);
+                    var isUrdu = "{% if current_lang == 'ur' %}true{% else %}false{% endif %}" === "true";
                     if(targetStatus === 'Present') {
-                        statusCell.innerHTML = '<span class="badge-present">Present ✅</span>';
+                        statusCell.innerHTML = '<span class="badge-present">' + (isUrdu ? 'حاضر ✅' : 'Present ✅') + '</span>';
                     } else {
-                        statusCell.innerHTML = '<span class="badge-absent">Absent ❌</span>';
+                        statusCell.innerHTML = '<span class="badge-absent">' + (isUrdu ? 'غیر حاضر ❌' : 'Absent ❌') + '</span>';
                     }
                 }
             })
@@ -54,73 +51,74 @@
     </script>
 </head>
 <body>
-
     <div class="header">
-        <h1>🧑‍🏫 Teacher Portal | Book: {{ subject }}</h1>
+        <h1>{% if current_lang == 'ur' %}🧑‍🏫 ٹیچر پورٹل | کتاب: {{ subject }}{% else %}🧑‍🏫 Teacher Portal | Book: {{ subject }}{% endif %}</h1>
         <div style="display: flex; align-items: center; gap: 15px;">
-            <span style="font-weight: bold;">Welcome, {{ teacher_name }}</span>
-            <a href="/logout" class="logout-btn">Log Out ➡️</a>
+            <span style="font-weight: bold;">{% if current_lang == 'ur' %}خوش آمدید، {{ teacher_name }}{% else %}Welcome, {{ teacher_name }}{% endif %}</span>
+            <a href="/logout" class="logout-btn">{% if current_lang == 'ur' %}لاگ آؤٹ ➡️{% else %}Log Out ➡️{% endif %}</a>
         </div>
     </div>
 
     <div class="card">
-        <h3>🔍 Class, Date Aur Period Select Karein</h3>
+        <div class="lang-switcher-bar">
+            <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
+        </div>
+        <h3>{% if current_lang == 'ur' %}🔍 کلاس، تاریخ اور پیریڈ منتخب کریں{% else %}🔍 Class, Date and Period Selection{% endif %}</h3>
         <form method="GET" action="/teacher/dashboard" class="setup-form">
             <select name="program" required>
-                <option value="">-- Select Program --</option>
-                <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option>
-                <option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option>
-                <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option>
-                <option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option>
-                <option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option>
-                <option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option>
-                <option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option>
-                <option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option>
-                <option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option>
-                <option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option>
-                <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option>
+                <option value="">{% if current_lang == 'ur' %}-- پروگرام منتخب کریں --{% else %}-- Select Program --{% endif %}</option>
+                <option value="FA">FA</option>
+                <option value="FA IT">FA IT</option>
+                <option value="FSc">FSc</option>
+                <option value="ICS">ICS</option>
+                <option value="DIT">DIT</option>
+                <option value="BS-CS">BS-CS</option>
+                <option value="BS-IT">BS-IT</option>
+                <option value="BS-Commerce">BS Commerce</option>
+                <option value="BS-English">BS English</option>
+                <option value="I.Com">I.Com</option>
+                <option value="D.Com">D.Com</option>
             </select>
 
             <select name="part" required>
-                <option value="">-- Select Part / Semester --</option>
-                <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option>
-                <option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option>
-                <option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option>
-                <option value="Semester-2" {% if selected_part == 'Semester-2' %}selected{% endif %}>Semester-2</option>
-                <option value="Semester-3" {% if selected_part == 'Semester-3' %}selected{% endif %}>Semester-3</option>
-                <option value="Semester-4" {% if selected_part == 'Semester-4' %}selected{% endif %}>Semester-4</option>
-                <option value="Semester-5" {% if selected_part == 'Semester-5' %}selected{% endif %}>Semester-5</option>
-                <option value="Semester-6" {% if selected_part == 'Semester-6' %}selected{% endif %}>Semester-6</option>
-                <option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option>
-                <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option>
+                <option value="">{% if current_lang == 'ur' %}-- سمسٹر منتخب کریں --{% else %}-- Select Part / Semester --{% endif %}</option>
+                <option value="Part-1">Part-1</option>
+                <option value="Part-2">Part-2</option>
+                <option value="Semester-1">Semester-1</option>
+                <option value="Semester-2">Semester-2</option>
+                <option value="Semester-3">Semester-3</option>
+                <option value="Semester-4">Semester-4</option>
+                <option value="Semester-5">Semester-5</option>
+                <option value="Semester-6">Semester-6</option>
+                <option value="Semester-7">Semester-7</option>
+                <option value="Semester-8">Semester-8</option>
             </select>
             
             <input type="date" id="global_date" name="attendance_date" value="{{ selected_date }}" required>
             
             <select name="period_no" id="global_period" required>
                 {% for p in range(1, total_periods + 1) %}
-                    <option value="{{ p }}" {% if selected_period == p|string %}selected{% endif %}>Period {{ p }}</option>
+                    <option value="{{ p }}" {% if selected_period == p|string %}selected{% endif %}>{% if current_lang == 'ur' %}پیریڈ {{ p }}{% else %}Period {{ p }}{% endif %}</option>
                 {% endfor %}
             </select>
             
-            <button type="submit" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-weight:bold;">List Load Karein</button>
+            <button type="submit" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-weight:bold;">{% if current_lang == 'ur' %}لسٹ لوڈ کریں{% else %}Load List{% endif %}</button>
         </form>
     </div>
-
     {% if students %}
     <div class="card">
         <div class="info-bar">
-            📍 {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }} | ⏱️ Period: {{ selected_period }}
+            {% if current_lang == 'ur' %}📍 منتخب کلاس: {{ selected_program }} ({{ selected_part }}) | 📅 تاریخ: {{ selected_date }} | ⏱️ پیریڈ: {{ selected_period }}{% else %}📍 Selected: {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }} | ⏱️ Period: {{ selected_period }}{% endif %}
         </div>
         
         <table>
             <thead>
                 <tr>
-                    <th>Roll No</th>
-                    <th>Student Name</th>
-                    <th>Father's Name</th>
-                    <th>Current Status</th>
-                    <th>Actions</th>
+                    <th>{% if current_lang == 'ur' %}رول نمبر{% else %}Roll No{% endif %}</th>
+                    <th>{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}</th>
+                    <th>{% if current_lang == 'ur' %}والد کا نام{% else %}Father's Name{% endif %}</th>
+                    <th>{% if current_lang == 'ur' %}موجودہ اسٹیٹس{% else %}Current Status{% endif %}</th>
+                    <th>{% if current_lang == 'ur' %}حاضری کے بٹن{% else %}Actions{% endif %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -130,17 +128,17 @@
                     <td>{{ student.student_name }}</td>
                     <td>{{ student.father_name }}</td>
                     <td id="status-box-{{ student.roll_no }}">
-                        <!-- 🛠️ Bilkul khali aur safaid block filter condition -->
+                        <!-- 🛠️ Safaid aur completely blank check rendering condition logic -->
                         {% if student.saved_status == 'Present' %}
-                            <span class="badge-present">Present ✅</span>
+                            <span class="badge-present">{% if current_lang == 'ur' %}حاضر ✅{% else %}Present ✅{% endif %}</span>
                         {% elif student.saved_status == 'Absent' %}
-                            <span class="badge-absent">Absent ❌</span>
+                            <span class="badge-absent">{% if current_lang == 'ur' %}غیر حاضر ❌{% else %}Absent ❌{% endif %}</span>
                         {% endif %}
                     </td>
                     <td>
                         <div class="action-container">
-                            <button type="button" class="btn-action-p" onclick="markInstantAttendance('{{ student.roll_no }}', 'Present')">Present</button>
-                            <button type="button" class="btn-action-a" onclick="markInstantAttendance('{{ student.roll_no }}', 'Absent')">Absent</button>
+                            <button type="button" class="btn-action-p" onclick="markInstantAttendance('{{ student.roll_no }}', 'Present')">{% if current_lang == 'ur' %}حاضر{% else %}Present{% endif %}</button>
+                            <button type="button" class="btn-action-a" onclick="markInstantAttendance('{{ student.roll_no }}', 'Absent')">{% if current_lang == 'ur' %}غیر حاضر{% else %}Absent{% endif %}</button>
                         </div>
                     </td>
                 </tr>
@@ -150,7 +148,7 @@
     </div>
     {% elif selected_program and selected_part %}
     <div class="card" style="text-align: center; color: #dc3545; font-weight: bold; padding: 30px;">
-        ⚠️ Is Class mein abhi tak koi student maujood nahi hai!
+        {% if current_lang == 'ur' %}⚠️ اس کلاس میں کوئی طالب علم موجود نہیں ہے!{% else %}⚠️ No student found in this class!{% endif %}
     </div>
     {% endif %}
 
