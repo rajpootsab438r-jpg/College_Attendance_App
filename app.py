@@ -13,75 +13,48 @@ def get_db_connection():
     conn = psycopg2.connect(DATABASE_URL)
     return conn
 
-# 1. Welcome Portal (With High-Performance Video Background Engine & Çukur Branded Identity)
+# 1. Welcome Portal (Original Normal Format - Contact Ke Niche Çukur)
 @app.route('/')
 def welcome():
-    # 🎥 High-Speed Open-Source Video CDN Direct MP4 streaming pipeline URL
-    VIDEO_URL = "https://zencdn.net"
-    
-    return f"""
+    return """
     <html>
         <head>
-            <title>College Attendance System | Çukur</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <title>College Attendance System</title>
             <style>
-                body {{ 
-                    font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 0;
-                    overflow: hidden; height: 100vh; display: flex; justify-content: center; align-items: center;
-                    background-color: #2c3e50;
-                }}
-                /* Full Screen Video Engine Core Hardware Settings */
-                #bg-video {{
-                    position: fixed; right: 0; bottom: 0; min-width: 100%; min-height: 100%;
-                    width: auto; height: auto; z-index: -2; object-fit: cover;
-                }}
-                /* Professional depth contrast transparency mask layering overlay */
-                .overlay {{
-                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                    background: linear-gradient(135deg, rgba(44, 62, 80, 0.7), rgba(0, 0, 0, 0.65)); 
-                    z-index: -1;
-                }}
-                .container {{ 
-                    background: rgba(255, 255, 255, 0.94); padding: 40px; border-radius: 16px; 
-                    box-shadow: 0px 15px 35px rgba(0,0,0,0.4); width: 90%; max-width: 350px; z-index: 1;
-                    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-                    border: 1px solid rgba(255,255,255,0.2);
-                    box-sizing: border-box;
-                }}
-                h1 {{ color: #1a252f; font-size: 24px; margin-top: 0; margin-bottom: 5px; font-weight: 700; }}
-                p {{ color: #7f8c8d; font-size: 15px; margin-bottom: 25px; }}
-                .btn {{ display: block; padding: 14px; margin: 12px 0; font-size: 16px; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; transition: all 0.2s ease-in-out; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }}
-                .btn-admin {{ background-color: #007bff; }}
-                .btn-admin:hover {{ background-color: #0056b3; transform: translateY(-2px); }}
-                .btn-teacher {{ background-color: #28a745; }}
-                .btn-teacher:hover {{ background-color: #218838; transform: translateY(-2px); }}
-                .btn-dev {{ background-color: #6f42c1; }}
-                .btn-dev:hover {{ background-color: #5a32a3; transform: translateY(-2px); }}
+                body { 
+                    font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; 
+                    background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url('https://unsplash.com');
+                    background-size: cover; background-position: center; background-attachment: fixed; padding-top: 100px;
+                }
+                .container { background: rgba(255, 255, 255, 0.95); padding: 40px; display: inline-block; border-radius: 16px; box-shadow: 0px 8px 30px rgba(0,0,0,0.3); width: 100%; max-width: 400px; }
+                h1 { color: #2c3e50; font-size: 26px; margin-bottom: 5px; }
+                p { color: #7f8c8d; font-size: 15px; margin-bottom: 25px; }
+                .btn { display: block; padding: 14px; margin: 12px 0; font-size: 16px; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; transition: all 0.2s ease; }
+                .btn-admin { background-color: #007bff; }
+                .btn-admin:hover { background-color: #0056b3; }
+                .btn-teacher { background-color: #28a745; }
+                .btn-teacher:hover { background-color: #218838; }
+                .btn-dev { background-color: #6f42c1; }
+                .btn-dev:hover { background-color: #5a32a3; }
             </style>
         </head>
         <body>
-            <!-- Autoplay configuration setup using explicit video properties mapping -->
-            <video autoplay muted loop playsinline preload="auto" id="bg-video">
-                <source src="{VIDEO_URL}" type="video/mp4">
-            </video>
-            <div class="overlay"></div>
-
             <div class="container">
                 <h1>🏫 College Attendance Portal</h1>
                 <p>Select your module to continue</p>
                 <a href="/login/admin" class="btn btn-admin">👑 College Admin Entry</a>
                 <a href="/login/teacher" class="btn btn-teacher">🧑‍🏫 Faculty Teacher Entry</a>
                 <a href="/login/developer" class="btn btn-dev">Super Developer Portal</a>
-                <div style="margin-top: 20px; font-size: 13px; color: #555; font-weight: 600;"> Support/WhatsApp: 03426600749</div>
+                <div style="margin-top: 15px; font-size: 13px; color: #555; font-weight: 500;"> Support/WhatsApp: 03426600749</div>
                 
-                <!-- 🏷️ Branded Signature Map Line Context -->
+                <!-- ⬇️ Çukur Signature Text Map: Contact Ke Theek Niche ⬇️ -->
                 <div style="margin-top: 10px; font-size: 14px; color: #6f42c1; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
             </div>
         </body>
     </html>
     """
 
-# 2. Secure Login Panel Gateway
+# 2. Secure Login Panel Gateway (Dual validation fix with DictCursor tracking)
 @app.route('/login/<role>', methods=['GET', 'POST'])
 def login(role):
     if request.method == 'POST':
