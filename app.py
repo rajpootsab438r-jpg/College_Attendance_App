@@ -80,6 +80,7 @@ def welcome():
         </body>
     </html>
     """
+
 # 2. Secure Login Panel Gateway
 @app.route('/login/<role>', methods=['GET', 'POST'])
 def login(role):
@@ -454,23 +455,85 @@ def teacher_dashboard():
     selected_program = request.args.get('program')
     selected_part = request.args.get('part')
     selected_date = request.args.get('attendance_date', datetime.today().strftime('%Y-%m-%d'))
+    
+    # ⚡ CRASH PROTECTOR: Agar period URL mein nahi hai to default '1' set hoga
+    selected_period = request.args.get('period_no')
+    if not selected_period or selected_period == 'None':
+        selected_period = '1'
+        
     students = []
     
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=DictCursor)
+    
+    # Har college ke kitne total periods hain woh fetch karenge
+    cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
+    col_info = cursor.fetchone()
+    total_periods = col_info['total_periods'] if col_info else 6
+    
     if selected_program and selected_part:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=DictCursor)
         cursor.execute('SELECT * FROM students WHERE program = %s AND part = %s AND college_id = %s', (selected_program, selected_part, college_id))
         raw_students = cursor.fetchall()
         
         for s in raw_students:
             s_dict = dict(s)
-            cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND college_id = %s', (s['roll_no'], selected_date, college_id))
+            # Date aur Period_no dono ka distinct verification filter query
+            cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
+                           (s['roll_no'], selected_date, int(selected_period), college_id))
             att_record = cursor.fetchone()
             s_dict['saved_status'] = att_record['status'] if att_record else 'Absent'
             students.append(s_dict)
-        conn.close()
+            
+    conn.close()
+    return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, 
+                           selected_program=selected_program, selected_part=selected_part, 
+                           selected_date=selected_date, selected_period=selected_period, total_periods=total_periods)
+
+# ⚡ Instant Live Save Gateway (AJAX Engine Updated For Date & Period Mappings)
+@app.route('/teacher/quick_attendance', methods=['POST'])
+def quick_attendance():
+    if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
+    
+    data = request.get_json()
+    roll = data.get('roll')
+    status = data.get('status')
+    att_date = data.get('date')
+    
+    # ⚡ CRASH PROTECTOR FOR AJAX: Default period handler
+    raw_period = data.get('period', 1)
+    period_no = int(raw_period) if raw_period and str(raw_period).isdigit() else 1
+    
+    teacher_username = session.get('user')
+    college_id = session.get('college_id')
+    
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=DictCursor)
+    
+    # Verification check dynamic unique row selector
+    cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
+                   (roll, att_date, period_no, college_id))
+    existing = cursor.fetchone()
+    
+    if existing: 
+        cursor.execute('UPDATE attendance SET status = %s, marked_by = %s, created_at = CURRENT_TIMESTAMP WHERE id = %s', (status, teacher_username, existing['id']))
+    else: 
+        cursor.execute('INSERT INTO attendance (student_roll, attendance_date, period_no, status, marked_by, college_id) VALUES (%s, %s, %s, %s, %s, %s)', 
+                       (roll, att_date, period_no, status, teacher_username, college_id))
         
-    return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, selected_program=selected_program, selected_part=selected_part, selected_date=selected_date)
+    conn.commit()
+    conn.close()
+    return {"status": "success", "current_status": status}
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('welcome'))
+
+# 🚀 Top-level application context instance global definition mapped for Vercel deployment stability
+application = app
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=7860)
 
 # ⚡ Instant Live Save Gateway (AJAX Engine)
 @app.route('/teacher/quick_attendance', methods=['POST'])
