@@ -80,13 +80,12 @@ def welcome():
         </body>
     </html>
     """
-
 # 2. Secure Login Panel Gateway
 @app.route('/login/<role>', methods=['GET', 'POST'])
 def login(role):
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
         
         if role == 'developer':
             if username == 'Cukurdeveloper' and password == 'Cukur301r':
@@ -121,6 +120,7 @@ def login(role):
                 session['college_id'] = user['college_id']
                 conn.close()
                 return redirect(url_for('teacher_dashboard'))
+                
         conn.close()
         return "<h2> Galat Credentials!</h2><a href='/'>Wapas Jayein</a>"
 
@@ -154,6 +154,7 @@ def login(role):
         </body>
     </html>
     """
+
 # 🛠️ 3. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
 def developer_dashboard():
