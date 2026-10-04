@@ -4,7 +4,6 @@ from psycopg2.extras import DictCursor
 from datetime import datetime
 
 app = Flask(__name__)
-# 🏷️ Branded security key signature context mapped to Çukur Systems architecture
 app.secret_key = "attendance_cukur_secret_key_123"
 
 # 🌍 Neon.tech Database Connection Function
@@ -12,8 +11,7 @@ def get_db_connection():
     DATABASE_URL = "postgresql://neondb_owner:npg_M7bJcCfdkN3e@ep-dry-cherry-b5iifiwq-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
     conn = psycopg2.connect(DATABASE_URL)
     return conn
-
-# 1. Welcome Portal (Original Normal Format - Contact Ke Niche Çukur)
+# 1. Welcome Portal
 @app.route('/')
 def welcome():
     return """
@@ -46,15 +44,12 @@ def welcome():
                 <a href="/login/teacher" class="btn btn-teacher">🧑‍🏫 Faculty Teacher Entry</a>
                 <a href="/login/developer" class="btn btn-dev">Super Developer Portal</a>
                 <div style="margin-top: 15px; font-size: 13px; color: #555; font-weight: 500;"> Support/WhatsApp: 03426600749</div>
-                
-                <!-- ⬇️ Çukur Signature Text Map: Contact Ke Theek Niche ⬇️ -->
                 <div style="margin-top: 10px; font-size: 14px; color: #6f42c1; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
             </div>
         </body>
     </html>
     """
-
-# 2. Secure Login Panel Gateway (Dual validation fix with DictCursor tracking)
+# 2. Secure Login Panel Gateway
 @app.route('/login/<role>', methods=['GET', 'POST'])
 def login(role):
     if request.method == 'POST':
@@ -128,8 +123,7 @@ def login(role):
         </body>
     </html>
     """
-
-# 🛠️ 3. SUPER DEVELOPER PORTAL
+# 3. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
 def developer_dashboard():
     if 'role' not in session or session['role'] != 'developer':
@@ -167,6 +161,7 @@ def developer_dashboard():
             cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s',
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id']))
             conn.commit()
+            
     cursor.execute('SELECT * FROM admins')
     colleges = cursor.fetchall()
     
@@ -217,7 +212,6 @@ def developer_dashboard():
             </td>
             <td><a href="/developer/delete/college/{c['id']}" style="color:red; font-weight:bold; text-decoration:none;" onclick="return confirm('Delete College?')">Delete Account ❌</a></td>
         </tr>"""
-        
     teacher_rows = ""
     for t in all_teachers:
         teacher_rows += f"""<tr>
@@ -247,6 +241,7 @@ def developer_dashboard():
                 <a href="/developer/delete/student/{s['id']}" style="color:red; font-weight:bold;" onclick="return confirm('Delete Student?')">Delete ❌</a>
             </td>
         </tr>"""
+
     edit_box = ""
     if edit_t_data:
         edit_box = f"""<div class="card" style="background:#fff3cd;"><h3>📝 Edit Faculty Teacher</h3>
@@ -325,8 +320,6 @@ def developer_dashboard():
         </body>
     </html>
     """
-
-# Developer Delete Endpoints
 @app.route('/developer/delete/college/<int:id>')
 def dev_delete_college(id):
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
@@ -356,7 +349,7 @@ def dev_delete_student(id):
     conn.commit()
     conn.close()
     return redirect(url_for('developer_dashboard'))
-# 👑 College Admin Dashboard Logic
+# 4. College Admin Dashboard Logic
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
@@ -383,20 +376,20 @@ def admin_dashboard():
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], college_id))
             conn.commit()
         elif action == 'update_teacher':
-            cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s AND college_id=%s',
-                         (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id'], college_id))
+            cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s',
+                         (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id']))
             conn.commit()
         elif action == 'update_student':
-            cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s AND college_id=%s',
-                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id'], college_id))
+            cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s',
+                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id']))
             conn.commit()
         elif action == 'delete_teacher':
             teacher_id = request.form.get('id')
-            cursor.execute('DELETE FROM teachers WHERE id=%s AND college_id=%s', (teacher_id, college_id))
+            cursor.execute('DELETE FROM teachers WHERE id=%s', (teacher_id,))
             conn.commit()
         elif action == 'delete_student':
             student_id = request.form.get('id')
-            cursor.execute('DELETE FROM students WHERE id=%s AND college_id=%s', (student_id, college_id))
+            cursor.execute('DELETE FROM students WHERE id=%s', (student_id,))
             conn.commit()
             
     cursor.execute('SELECT * FROM students WHERE college_id = %s', (college_id,))
@@ -419,6 +412,7 @@ def admin_dashboard():
         
     conn.close()
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, current_user=current_username)
+# 5. Teacher Dashboard Engine
 @app.route('/teacher/dashboard')
 def teacher_dashboard():
     if 'role' not in session or session['role'] != 'teacher': return redirect(url_for('welcome'))
@@ -429,7 +423,6 @@ def teacher_dashboard():
     selected_part = request.args.get('part')
     selected_date = request.args.get('attendance_date', datetime.today().strftime('%Y-%m-%d'))
     
-    # ⚡ CRASH PROTECTOR: Agar period URL mein nahi hai to default '1' set hoga
     selected_period = request.args.get('period_no')
     if not selected_period or selected_period == 'None':
         selected_period = '1'
@@ -439,7 +432,6 @@ def teacher_dashboard():
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=DictCursor)
     
-    # Har college ke kitne total periods hain woh fetch karenge
     cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
     col_info = cursor.fetchone()
     total_periods = col_info['total_periods'] if col_info else 6
@@ -450,7 +442,6 @@ def teacher_dashboard():
         
         for s in raw_students:
             s_dict = dict(s)
-            # Date aur Period_no dono ka distinct verification filter query
             cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
                            (s['roll_no'], selected_date, int(selected_period), college_id))
             att_record = cursor.fetchone()
@@ -462,7 +453,6 @@ def teacher_dashboard():
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods)
 
-# ⚡ Instant Live Save Gateway (AJAX Engine Updated For Date & Period Mappings)
 @app.route('/teacher/quick_attendance', methods=['POST'])
 def quick_attendance():
     if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
@@ -472,7 +462,6 @@ def quick_attendance():
     status = data.get('status')
     att_date = data.get('date')
     
-    # ⚡ CRASH PROTECTOR FOR AJAX: Default period handler
     raw_period = data.get('period', 1)
     period_no = int(raw_period) if raw_period and str(raw_period).isdigit() else 1
     
@@ -482,7 +471,6 @@ def quick_attendance():
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=DictCursor)
     
-    # Verification check dynamic unique row selector
     cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
                    (roll, att_date, period_no, college_id))
     existing = cursor.fetchone()
@@ -502,45 +490,6 @@ def logout():
     session.clear()
     return redirect(url_for('welcome'))
 
-# 🚀 Top-level application context instance global definition mapped for Vercel deployment stability
-application = app
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=7860)
-
-# ⚡ Instant Live Save Gateway (AJAX Engine)
-@app.route('/teacher/quick_attendance', methods=['POST'])
-def quick_attendance():
-    if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
-    
-    data = request.get_json()
-    roll = data.get('roll')
-    status = data.get('status')
-    att_date = data.get('date')
-    teacher_username = session.get('user')
-    college_id = session.get('college_id')
-    
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=DictCursor)
-    
-    cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND college_id = %s', (roll, att_date, college_id))
-    existing = cursor.fetchone()
-    
-    if existing: 
-        cursor.execute('UPDATE attendance SET status = %s, marked_by = %s, created_at = CURRENT_TIMESTAMP WHERE id = %s', (status, teacher_username, existing['id']))
-    else: 
-        cursor.execute('INSERT INTO attendance (student_roll, attendance_date, status, marked_by, college_id) VALUES (%s, %s, %s, %s, %s)', (roll, att_date, status, teacher_username, college_id))
-        
-    conn.commit()
-    conn.close()
-    return {"status": "success", "current_status": status}
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('welcome'))
-
-# 🚀 Top-level application context instance global definition mapped for Vercel deployment stability
 application = app
 
 if __name__ == '__main__':
