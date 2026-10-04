@@ -135,9 +135,10 @@ def login(role):
                 conn.close()
                 return redirect(url_for('teacher_dashboard'))
         elif role == 'developer':
-            if username == "cukur" and password == "cukur749":
+            # 🛠️ UPDATED MASTER CREDENTIALS: Username Cukur | Password Cukur301r
+            if username == "Cukur" and password == "Cukur301r":
                 session['role'] = 'developer'
-                session['user'] = 'cukur'
+                session['user'] = 'Cukur'
                 conn.close()
                 return redirect(url_for('developer_dashboard'))
                 
@@ -162,7 +163,7 @@ def login(role):
                     <input type="password" name="password" placeholder="Enter Secret Password" required>
                     <button type="submit">Verify & Login</button>
                 </form>
-                <br><a href="/" style="text-decoration:none; color:#666; font-size:13px;">⬅️ Go Back Back</a>
+                <br><a href="/" style="text-decoration:none; color:#666; font-size:13px;">⬅️ Go Back</a>
             </div>
         </body>
     </html>
@@ -174,6 +175,7 @@ def admin_dashboard():
     college_id = session.get('user_id')
     current_username = session.get('user')
     college_name = session.get('college_name')
+    current_lang = session.get('lang', 'en')
     
     selected_program = request.args.get('program', '')
     selected_part = request.args.get('part', '')
@@ -234,7 +236,7 @@ def admin_dashboard():
         
     conn.close()
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
-                           current_user=current_username, selected_program=selected_program, selected_part=selected_part)
+                           current_user=current_username, selected_program=selected_program, selected_part=selected_part, current_lang=current_lang)
 # 4. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
 def developer_dashboard():
@@ -286,19 +288,98 @@ def developer_dashboard():
         cursor.execute('SELECT * FROM students WHERE id=%s', (request.args.get('edit_s'),))
         edit_s_data = cursor.fetchone()
         
-    college_rows = "".join([f"<tr><td>{c['id']}</td><td><a href='/developer/dashboard?filter_college={c['id']}'>{c['college_name']}</a></td><td>{c['username']}</td><td>{c['password']}</td><td><form method='POST'><input type='hidden' name='action' value='update_college_periods'><input type='hidden' name='college_id' value='{c['id']}'><input type='number' name='total_periods' value='{c['total_periods']}' style='width:50px;'><button type='submit'>Set</button></form></td><td><a href='/developer/delete/college/{c['id']}'>Delete</a></td></tr>" for c in colleges])
-    teacher_rows = "".join([f"<tr><td>{t['college_name']}</td><td>{t['teacher_id']}</td><td>{t['name']}</td><td>{t['username']}</td><td>{t['password']}</td><td>{t['subject']}</td><td><a href='/developer/dashboard?edit_t={t['id']}'>Edit</a> | <a href='/developer/delete/teacher/{t['id']}'>Delete</a></td></tr>" for t in all_teachers])
-    student_rows = "".join([f"<tr><td>{s['college_name']}</td><td>{s['roll_no']}</td><td>{s['student_name']}</td><td>{s['father_name']}</td><td>{s['phone_number']}</td><td>{s['program']} ({s['part']})</td><td><a href='/developer/dashboard?edit_s={s['id']}'>Edit</a> | <a href='/developer/delete/student/{s['id']}'>Delete</a></td></tr>" for s in all_students])
+    college_rows = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#6f42c1;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #dee2e6;padding:12px;'>{c['username']}</td><td style='border:1px solid #dee2e6;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #dee2e6;padding:12px;'><form method='POST' style='margin:0;display:flex;gap:5px;'><input type='hidden' name='action' value='update_college_periods'><input type='hidden' name='college_id' value='{c['id']}'><input type='number' name='total_periods' value='{c['total_periods']}' style='width:50px;padding:4px;margin:0;'><button type='submit' style='width:auto;padding:4px 8px;font-size:12px;background:#28a745;margin:0;'>Set</button></form></td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/delete/college/{c['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;' onclick='return confirm(\"Delete College?\")'>Delete ❌</a></td></tr>" for c in colleges])
+    teacher_rows = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #dee2e6;padding:12px;'>{t['name']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{t['username']}</td><td style='border:1px solid #dee2e6;padding:12px;color:#28a745;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{t['subject']}</td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/dashboard?edit_t={t['id']}' style='color:#007bff;font-weight:bold;text-decoration:none;margin-right:10px;'>Edit 📝</a> | <a href='/developer/delete/teacher/{t['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;' onclick='return confirm(\"Delete Teacher?\")'>Delete ❌</a></td></tr>" for t in all_teachers])
+    student_rows = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #dee2e6;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/dashboard?edit_s={s['id']}' style='color:#007bff;font-weight:bold;text-decoration:none;margin-right:10px;'>Edit 📝</a> | <a href='/developer/delete/student/{s['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;' onclick='return confirm(\"Delete Student?\")'>Delete ❌</a></td></tr>" for s in all_students])
 
     edit_box = ""
     if edit_t_data:
-        edit_box = f"<div style='background:#fff3cd; padding:20px;'><form method='POST'><input type='hidden' name='action' value='update_teacher_dev'><input type='hidden' name='id' value='{edit_t_data['id']}'><input type='text' name='teacher_id' value='{edit_t_data['teacher_id']}'><input type='text' name='name' value='{edit_t_data['name']}'><input type='text' name='username' value='{edit_t_data['username']}'><input type='text' name='password' value='{edit_t_data['password']}'><input type='text' name='subject' value='{edit_t_data['subject']}'><button type='submit'>Update</button></form></div>"
+        edit_box = f"<div style='background:#fff3cd; padding:20px; border-radius:8px; margin-bottom:20px;'><h4 style='margin:0 0 10px 0;'>📝 Edit Faculty Teacher</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_teacher_dev'><input type='hidden' name='id' value='{edit_t_data['id']}'><input type='text' name='teacher_id' value='{edit_t_data['teacher_id']}' placeholder='ID' style='width:120px;'><input type='text' name='name' value='{edit_t_data['name']}' placeholder='Name'><input type='text' name='username' value='{edit_t_data['username']}' placeholder='User'><input type='text' name='password' value='{edit_t_data['password']}' placeholder='Pass'><input type='text' name='subject' value='{edit_t_data['subject']}' placeholder='Subject'><button type='submit' style='width:auto;background:#28a745;'>Save Updates</button></form></div>"
     elif edit_s_data:
-        edit_box = f"<div style='background:#fff3cd; padding:20px;'><form method='POST'><input type='hidden' name='action' value='update_student_dev'><input type='hidden' name='id' value='{edit_s_data['id']}'><input type='text' name='roll_no' value='{edit_s_data['roll_no']}'><input type='text' name='student_name' value='{edit_s_data['student_name']}'><input type='text' name='father_name' value='{edit_s_data['father_name']}'><input type='text' name='phone_number' value='{edit_s_data['phone_number']}'><input type='text' name='program' value='{edit_s_data['program']}'><input type='text' name='part' value='{edit_s_data['part']}'><button type='submit'>Update</button></form></div>"
-
+        edit_box = f"<div style='background:#fff3cd; padding:20px; border-radius:8px; margin-bottom:20px;'><h4 style='margin:0 0 10px 0;'>📝 Edit Student Record</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_student_dev'><input type='hidden' name='id' value='{edit_s_data['id']}'><input type='text' name='roll_no' value='{edit_s_data['roll_no']}' placeholder='Roll' style='width:120px;'><input type='text' name='student_name' value='{edit_s_data['student_name']}' placeholder='Name'><input type='text' name='father_name' value='{edit_s_data['father_name']}' placeholder='Father'><input type='text' name='phone_number' value='{edit_s_data['phone_number']}' placeholder='Phone'><input type='text' name='program' value='{edit_s_data['program']}' placeholder='Program'><input type='text' name='part' value='{edit_s_data['part']}' placeholder='Part'><button type='submit' style='width:auto;background:#28a745;'>Save Updates</button></form></div>"
     conn.close()
-    return f"""<html><head><title>Dev Dashboard</title><style>body{{font-family:Arial;padding:20px;background:#f4f6f9;}}table{{width:100%;border-collapse:collapse;background:white;margin-bottom:20px;}}th,td{{border:1px solid #ddd;padding:8px;}}th{{background:#eee;}}input{{padding:6px;margin:4px 0;}}button{{padding:6px 12px;background:#6f42c1;color:white;border:none;cursor:pointer;}}</style></head><body><h2>🛠️ Developer Control Console</h2><a href="/logout">Log Out</a>{edit_box}<div style="display:flex;gap:20px;margin-top:20px;"><div style="background:white;padding:20px;border-radius:8px;min-width:300px;"><h3>➕ Add College Account</h3><form method="POST"><input type="hidden" name="action" value="create_new_college"><input type="text" name="college_name" placeholder="College Name" required><input type="text" name="username" placeholder="Admin Username" required><input type="text" name="password" placeholder="Admin Password" required><input type="number" name="total_periods" value="6" required><button type="submit">Create Account</button></form></div><div style="background:white;padding:20px;border-radius:8px;flex:1;"><h3>🏫 Registered Accounts Matrix</h3><table><thead><tr><th>ID</th><th>College</th><th>User</th><th>Pass</th><th>Periods</th><th>Action</th></tr></thead><tbody>{college_rows}</tbody></table></div></div><h3>🧑‍🏫 Faculty Verification Audit</h3><table><thead><tr><th>College</th><th>ID</th><th>Name</th><th>User</th><th>Pass</th><th>Subject</th><th>Action</th></tr></thead><tbody>{teacher_rows}</tbody></table><h3>🎓 Registered Student Master Log</h3><table><thead><tr><th>College</th><th>Roll</th><th>Name</th><th>Father</th><th>Phone</th><th>Class</th><th>Action</th></tr></thead><tbody>{student_rows}</tbody></table></body></html>"""
-# 🗑️ DEVELOPER DELETION SYSTEM ENDPOINTS
+    return """
+    <html>
+        <head>
+            <title>Dev Dashboard</title>
+            <style>
+                body { font-family: 'Segoe UI', Arial, sans-serif; padding: 25px; background: #f4f6f9; margin: 0; }
+                h2 { color: #1e1b4b; margin: 0; }
+                h3 { margin-top: 0; color: #495057; border-bottom: 2px solid #e9ecef; padding-bottom: 8px; }
+                .header-bar { background: #6f42c1; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+                .grid { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px; }
+                .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); flex: 1; min-width: 320px; }
+                input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; }
+                button { width: 100%; padding: 10px; background: #6f42c1; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 5px; }
+                button:hover { background: #5a32a3; }
+                table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; border-radius: 8px; overflow: hidden; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); }
+                th { background-color: #e9ecef !important; color: #495057 !important; font-weight: bold; border: 1px solid #dee2e6; padding: 12px; text-align: left; }
+                tr:nth-child(even) { background-color: #f8f9fa; }
+                .full-width { flex: 1 1 100%; }
+            </style>
+        </head>
+        <body>
+            <div class="header-bar">
+                <h2>🛠 shrink; Çukur Master Developer Panel Control Console</h2>
+                <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
+                <a href="/logout" style="color: white; font-weight: bold; text-decoration: none; background: rgba(0,0,0,0.2); padding: 8px 15px; border-radius: 5px;">Log Out ➡️</a>
+            </div>
+            
+            """ + edit_box + """
+            
+            <div class="grid">
+                <div class="card">
+                    <h3>➕ Add College Account</h3>
+                    <form method="POST">
+                        <input type="hidden" name="action" value="create_new_college">
+                        <input type="text" name="college_name" placeholder="College Name (e.g. Punjab College)" required>
+                        <input type="text" name="username" placeholder="Admin Username" required>
+                        <input type="text" name="password" placeholder="Admin Password" required>
+                        <input type="number" name="total_periods" placeholder="Total Periods Config" value="6" required>
+                        <button type="submit">Create Account</button>
+                    </form>
+                </div>
+                
+                <div class="card">
+                    <h3>📋 Registered Accounts Matrix</h3>
+                    <table>
+                        <thead>
+                            <tr><th>ID</th><th>College Name</th><th>User</th><th>Pass</th><th>Periods</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                            """ + college_rows + """
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="card full-width">
+                    <h3>🧑‍🏫 Faculty Verification Audit</h3>
+                    <table>
+                        <thead>
+                            <tr><th>College</th><th>Teacher ID</th><th>Name</th><th>User</th><th>Pass (Real)</th><th>Subject</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                            """ + teacher_rows + """
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="card full-width">
+                    <h3>🎓 Registered Student Master Log</h3>
+                    <table>
+                        <thead>
+                            <tr><th>College</th><th>Roll No</th><th>Name</th><th>Father Name</th><th>Phone Number</th><th>Class Filter</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                            """ + student_rows + """
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </body>
+    </html>
+    """
+# 5. DEVELOPER DELETION SYSTEM ENDPOINTS
 @app.route('/developer/delete/college/<int:id>')
 def developer_delete_college(id):
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
@@ -328,7 +409,7 @@ def developer_delete_student(id):
     conn.commit()
     conn.close()
     return redirect(url_for('developer_dashboard'))
-# 5. FACULTY TEACHER ATTTENDANCE ENGINE
+# 6. FACULTY TEACHER ATTTENDANCE ENGINE
 @app.route('/teacher/dashboard')
 def teacher_dashboard():
     if 'role' not in session or session['role'] != 'teacher': return redirect(url_for('welcome'))
@@ -356,6 +437,7 @@ def teacher_dashboard():
             cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
                            (s['roll_no'], selected_date, int(selected_period), college_id))
             att_record = cursor.fetchone()
+            # 🛠️ FIXED STATE INDICATOR: Database mein record na ho to 100% forced safaid khali block rahega
             s_dict['saved_status'] = att_record['status'] if att_record else ''
             students.append(s_dict)
     conn.close()
@@ -363,7 +445,7 @@ def teacher_dashboard():
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
 
-# ⚡ Instant Live Save Gateway (AJAX Engine Updated For Blanks)
+# ⚡ Instant Live Save Gateway (AJAX Engine Updated For Date, Period & Blanks Map)
 @app.route('/teacher/quick_attendance', methods=['POST'])
 def quick_attendance():
     if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
