@@ -17,8 +17,11 @@
         th { background-color: #e9ecef; color: #495057; }
         tr:nth-child(even) { background-color: #f8f9fa; }
         .info-bar { background: #e2f0d9; color: #385723; padding: 12px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
+        
+        /* 🛠️ Beautiful Dynamic Status Indicators */
         .badge-present { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
         .badge-absent { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
+        
         .action-container { display: flex; gap: 10px; }
         .btn-action-p { background-color: #28a745; color: white; border: none; padding: 8px 14px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: 0.2s; }
         .btn-action-p:hover { background-color: #218838; }
@@ -94,7 +97,6 @@
             
             <input type="date" id="global_date" name="attendance_date" value="{{ selected_date }}" required>
             
-            <!-- ⚙️ Dynamic College Wise Period Selector Dropdown Dropdown -->
             <select name="period_no" id="global_period" required>
                 {% for p in range(1, total_periods + 1) %}
                     <option value="{{ p }}" {% if selected_period == p|string %}selected{% endif %}>Period {{ p }}</option>
@@ -128,9 +130,10 @@
                     <td>{{ student.student_name }}</td>
                     <td>{{ student.father_name }}</td>
                     <td id="status-box-{{ student.roll_no }}">
+                        <!-- 🛠️ Bilkul khali aur safaid block filter condition -->
                         {% if student.saved_status == 'Present' %}
                             <span class="badge-present">Present ✅</span>
-                        {% else %}
+                        {% elif student.saved_status == 'Absent' %}
                             <span class="badge-absent">Absent ❌</span>
                         {% endif %}
                     </td>
