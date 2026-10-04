@@ -2,6 +2,7 @@
 <html>
 <head> 
     <title>Admin Dashboard</title> 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style> 
         body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; } 
         .header { background: #343a40; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; } 
@@ -9,23 +10,23 @@
         .logout-btn { color: #ffc107; text-decoration: none; font-weight: bold; } 
         .grid { display: flex; gap: 20px; flex-wrap: wrap; } 
         .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); flex: 1; min-width: 300px; } 
-        .card-edit { background: #fff3cd; border: 2px solid #ffeeba; } 
         h3 { margin-top: 0; color: #495057; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; } 
         input, select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; } 
         button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 5px; } 
         button:hover { background: #0056b3; } 
         .btn-success { background: #28a745; } 
         .btn-success:hover { background: #218838; } 
-        .btn-warning { background: #ffc107; color: #212529; } 
-        .btn-warning:hover { background: #e0a800; }
-                table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; } 
+        .filter-form-bar { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
+        .filter-form-bar select { min-width: 160px; margin: 0; }
+        .filter-form-bar button { margin: 0; width: auto; padding: 10px 20px; }
+        .info-bar { background: #e8f4fd; color: #1d4ed8; padding: 12px; border-radius: 6px; margin-bottom: 15px; font-weight: bold; font-size: 15px; border: 1px solid #bfdbfe; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; } 
         th, td { border: 1px solid #dee2e6; padding: 10px; text-align: left; } 
         th { background-color: #e9ecef; color: #495057; } 
         tr:nth-child(even) { background-color: #f8f9fa; } 
         .full-width { flex: 1 1 100%; } 
-        .del-btn { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; text-decoration: none; font-size: 12px; margin-left: 5px; } 
+        .del-btn { background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; text-decoration: none; font-size: 13px; } 
         .del-btn:hover { background: #bd2130; } 
-        .edit-btn { background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; text-decoration: none; font-size: 12px; } 
         .view-pass-btn { background: none; border: none; color: #007bff; cursor: pointer; font-size: 12px; font-weight: bold; padding: 0; margin-left: 5px; text-decoration: underline; } 
         .password-container { position: relative; width: 100%; } 
         .toggle-eye { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; user-select: none; color: #666; } 
@@ -61,7 +62,6 @@
     <div style="color: white; font-weight: bold;">Logged in as: <span style="color:#ffc107;">{{ current_user }}</span></div> 
     <a href="/logout" class="logout-btn">Log Out ➡️</a>
 </div>
-<!-- Admin Settings Control Grid -->
 <div class="grid" style="margin-bottom: 20px;"> 
     <div class="card"> 
         <h3>⚙️ Admin Username Change Karein</h3> 
@@ -73,31 +73,10 @@
     </div>
 </div>
 
-<!-- DYNAMIC LIVE EDIT RECORD PANELS -->
-<div class="grid" style="margin-bottom: 20px;"> 
-    {% if edit_teacher_data %} 
-    <div class="card card-edit"> 
-        <h3>📝 Teacher Ka Record Edit/Update Karein</h3> 
-        <form method="POST" action="/admin/dashboard"> 
-            <input type="hidden" name="action" value="update_teacher"> 
-            <input type="hidden" name="id" value="{{ edit_teacher_data.id }}"> 
-            <input type="text" name="teacher_id" value="{{ edit_teacher_data.teacher_id }}" placeholder="Teacher ID (Optional)"> 
-            <input type="text" name="name" value="{{ edit_teacher_data.name }}" placeholder="Teacher Name" required> 
-            <input type="text" name="username" value="{{ edit_teacher_data.username }}" placeholder="Username" required> 
-            <div class="password-container"> 
-                <input type="password" id="edit_teacher_password" name="password" value="{{ edit_teacher_data.password }}" placeholder="Password" required> 
-                <span id="eye-icon-edit_teacher_password" class="toggle-eye" onclick="toggleInputPassword('edit_teacher_password')">👁️</span> 
-            </div> 
-            <input type="text" name="subject" value="{{ edit_teacher_data.subject }}" placeholder="Subject" required> 
-            <button type="submit" class="btn-warning">Changes Save Karein 💾</button> 
-        </form>
-    </div> 
-    {% endif %}
-</div>
 <div class="grid"> 
     <!-- Naya Teacher Register Form --> 
     <div class="card"> 
-        <h3>🧑🏫 Naya Teacher Register Karein</h3> 
+        <h3>🧑‍🏫 Naya Teacher Register Karein</h3> 
         <form method="POST" action="/admin/dashboard"> 
             <input type="hidden" name="action" value="add_teacher"> 
             <input type="text" name="teacher_id" placeholder="Teacher ID (Optional)" autocomplete="off"> 
@@ -111,7 +90,8 @@
             <button type="submit">Teacher Add Karein</button> 
         </form> 
     </div>
-        <!-- Naya Student Add Form --> 
+
+    <!-- Naya Student Add Form --> 
     <div class="card"> 
         <h3>📋 Naya Student Add Karein</h3> 
         <form method="POST" action="/admin/dashboard"> 
@@ -151,8 +131,9 @@
         </form> 
     </div>
 </div>
-<div class="card full-width"> 
-    <h3>🧑🏫 Registered Teachers Ki List & Passwords Audit</h3> 
+
+<div class="card full-width" style="margin-top: 20px;"> 
+    <h3>🧑‍🏫 Registered Teachers Ki List & Passwords Audit</h3> 
     <table> 
         <thead> 
             <tr><th>Teacher ID</th><th>Name</th><th>Username</th><th>Password</th><th>Subject</th><th>Actions</th></tr> 
@@ -172,7 +153,7 @@
                     <form method="POST" action="/admin/dashboard" style="display:inline;"> 
                         <input type="hidden" name="action" value="delete_teacher"> 
                         <input type="hidden" name="id" value="{{ teacher['id'] }}"> 
-                        <button type="submit" class="del-btn" style="width:auto; padding:5px 10px; margin:0;" onclick="return confirm('Delete?')">Delete ❌</button> 
+                        <button type="submit" class="del-btn" onclick="return confirm('Delete Teacher?')">Delete ❌</button> 
                     </form> 
                 </td> 
             </tr> 
@@ -180,8 +161,49 @@
         </tbody> 
     </table>
 </div>
-<div class="card full-width"> 
-    <h3>📋 Registered Students Ki List & Attendance Records</h3> 
+<div class="card full-width" style="margin-top: 20px;"> 
+    <h3>📋 Registered Students Ki List Filters</h3> 
+    
+    <form method="GET" action="/admin/dashboard" class="filter-form-bar">
+        <select name="program"> 
+            <option value="">-- All Programs --</option> 
+            <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option> 
+            <option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option> 
+            <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option> 
+            <option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option> 
+            <option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option> 
+            <option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option> 
+            <option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option> 
+            <option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option> 
+            <option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option> 
+            <option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option> 
+            <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option> 
+        </select> 
+        <select name="part"> 
+            <option value="">-- All Parts/Semesters --</option> 
+            <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option> 
+            <option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option> 
+            <option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option> 
+            <option value="Semester-2" {% if selected_part == 'Semester-2' %}selected{% endif %}>Semester-2</option> 
+            <option value="Semester-3" {% if selected_part == 'Semester-3' %}selected{% endif %}>Semester-3</option> 
+            <option value="Semester-4" {% if selected_part == 'Semester-4' %}selected{% endif %}>Semester-4</option> 
+            <option value="Semester-5" {% if selected_part == 'Semester-5' %}selected{% endif %}>Semester-5</option> 
+            <option value="Semester-6" {% if selected_part == 'Semester-6' %}selected{% endif %}>Semester-6</option> 
+            <option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option> 
+            <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option> 
+        </select> 
+        <button type="submit" style="background:#007bff;">Filter Students List 🔍</button>
+        {% if selected_program or selected_part %}
+            <a href="/admin/dashboard" style="color:#dc3545; font-weight:bold; text-decoration:none; margin-left:10px;">Clear Filter ❌</a>
+        {% endif %}
+    </form>
+
+    {% if selected_program or selected_part %}
+    <div class="info-bar">
+        📍 Current Filter Active: {% if selected_program %}{{ selected_program }}{% endif %} {% if selected_part %}({{ selected_part }}){% endif %}
+    </div>
+    {% endif %}
+
     <table> 
         <thead> 
             <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Attendance Status (%)</th><th>Actions</th></tr> 
@@ -200,7 +222,7 @@
                     <form method="POST" action="/admin/dashboard" style="display:inline;"> 
                         <input type="hidden" name="action" value="delete_student"> 
                         <input type="hidden" name="id" value="{{ student['id'] }}"> 
-                        <button type="submit" class="del-btn" style="width:auto; padding:5px 10px; margin:0;" onclick="return confirm('Delete?')">❌</button> 
+                        <button type="submit" class="del-btn" onclick="return confirm('Delete Student?')">❌</button> 
                     </form> 
                 </td> 
             </tr> 

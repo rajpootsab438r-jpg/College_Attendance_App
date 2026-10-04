@@ -349,13 +349,18 @@ def dev_delete_student(id):
     conn.commit()
     conn.close()
     return redirect(url_for('developer_dashboard'))
-# 4. College Admin Dashboard Logic
+# 👑 College Admin Dashboard Logic (Updated with Class Filter Engine)
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
     college_id = session.get('user_id')
     current_username = session.get('user')
     college_name = session.get('college_name')
+    
+    # Filter selection URL params fetch karein
+    selected_program = request.args.get('program', '')
+    selected_part = request.args.get('part', '')
+    
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=DictCursor)
     
@@ -392,14 +397,23 @@ def admin_dashboard():
             cursor.execute('DELETE FROM students WHERE id=%s', (student_id,))
             conn.commit()
             
-    cursor.execute('SELECT * FROM students WHERE college_id = %s', (college_id,))
+    # Dynamic Query Mapping logic based on filter choices
+    if selected_program and selected_part:
+        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s AND part = %s', (college_id, selected_program, selected_part))
+    elif selected_program:
+        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s', (college_id, selected_program))
+    elif selected_part:
+        cursor.execute('SELECT * FROM students WHERE college_id = %s AND part = %s', (college_id, selected_part))
+    else:
+        cursor.execute('SELECT * FROM students WHERE college_id = %s', (college_id,))
+        
     raw_students = cursor.fetchall()
     cursor.execute('SELECT * FROM teachers WHERE college_id = %s', (college_id,))
     raw_teachers = cursor.fetchall()
     
     teachers = [dict(t) for t in raw_teachers]
-    
     students = []
+    
     for s in raw_students:
         s_dict = dict(s)
         roll = s['roll_no']
@@ -411,7 +425,9 @@ def admin_dashboard():
         students.append(s_dict)
         
     conn.close()
-    return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, current_user=current_username)
+    return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
+                           current_user=current_username, selected_program=selected_program, selected_part=selected_part)
+
 # 5. Teacher Dashboard Engine
 @app.route('/teacher/dashboard')
 def teacher_dashboard():
