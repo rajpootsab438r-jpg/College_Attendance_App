@@ -6,7 +6,7 @@
     <style> 
         body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; transition: max-width 0.3s ease; margin-left: auto; margin-right: auto; } 
         
-        /* 📱 Core Mobile Responsive Header Realignment Setup */
+        /* 📱 Mobile Responsive Header Realignment Setup */
         .header { background: #343a40; color: white; padding: 20px 25px; border-radius: 12px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); } 
         @media (min-width: 600px) {
             .header { flex-direction: row; justify-content: space-between; align-items: center; }
@@ -116,7 +116,6 @@
             menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
         }
         
-        // Window close event bindings for menu handling out clicks
         window.onclick = function(event) {
             if (!event.target.matches('.burger-menu-btn') && !event.target.closest('.burger-menu-btn')) {
                 var dropdowns = document.getElementsByClassName("nav-dropdown-menu");
@@ -133,7 +132,6 @@
 <div class="top-nav-bar">
     <div style="position: relative; display: inline-block;">
         <button class="burger-menu-btn" onclick="toggleMenuDrawer()">☰</button>
-        <!-- Dropdown Box List -->
         <div id="nav-dropdown-box" class="nav-dropdown-menu">
             <button type="button" onclick="toggleDesktopView()">
                 <span id="desktop-toggle-text">🖥️ Desktop View</span>
@@ -184,6 +182,7 @@
             <button type="submit">{% if current_lang == 'ur' %}ٹیچر شامل کریں{% else %}Add Teacher{% endif %}</button> 
         </form> 
     </div>
+
     <!-- Naya Student Add Form --> 
     <div class="card"> 
         <h3>{% if current_lang == 'ur' %}📋 نیا طالب علم شامل کریں{% else %}📋 Add New Student{% endif %}</h3> 
@@ -224,6 +223,46 @@
         </form> 
     </div>
 </div>
+{% if edit_teacher %}
+<div class="card full-width" style="background: #fff3cd; border: 1px solid #ffeeba; margin-bottom: 25px; margin-top: 20px;">
+    <h3 style="color: #856404; border-bottom-color: #ffeeba;">📝 {% if current_lang == 'ur' %}ٹیچر کی تفصیلات ایڈٹ کریں{% else %}Edit Teacher Details{% endif %}</h3>
+    <form method="POST" action="/admin/dashboard">
+        <input type="hidden" name="action" value="edit_teacher_admin">
+        <input type="hidden" name="id" value="{{ edit_teacher.id }}">
+        <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 200px;"><input type="text" name="teacher_id" value="{{ edit_teacher.teacher_id }}" placeholder="Teacher ID" required></div>
+            <div style="flex: 1; min-width: 200px;"><input type="text" name="name" value="{{ edit_teacher.name }}" placeholder="Teacher Name" required></div>
+            <div style="flex: 1; min-width: 200px;"><input type="text" name="username" value="{{ edit_teacher.username }}" placeholder="Username" required></div>
+            <div style="flex: 1; min-width: 200px;"><input type="text" name="password" value="{{ edit_teacher.password }}" placeholder="Password" required></div>
+            <div style="flex: 1; min-width: 200px;"><input type="text" name="subject" value="{{ edit_teacher.subject }}" placeholder="Subject/Book" required></div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button type="submit" class="btn-success" style="width: auto; padding: 10px 25px;">💾 {% if current_lang == 'ur' %}تفصیلات محفوظ کریں{% else %}Save Changes{% endif %}</button>
+            <a href="/admin/dashboard" style="background: #6c757d; color: white; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 14px; display: inline-block; margin-top: 8px;">❌ {% if current_lang == 'ur' %}کنسل کریں{% else %}Cancel{% endif %}</a>
+        </div>
+    </form>
+</div>
+{% elif edit_student %}
+<div class="card full-width" style="background: #fff3cd; border: 1px solid #ffeeba; margin-bottom: 25px; margin-top: 20px;">
+    <h3 style="color: #856404; border-bottom-color: #ffeeba;">📝 {% if current_lang == 'ur' %}طالب علم کا ریکارڈ ایڈٹ کریں{% else %}Edit Student Record{% endif %}</h3>
+    <form method="POST" action="/admin/dashboard">
+        <input type="hidden" name="action" value="edit_student_admin">
+        <input type="hidden" name="id" value="{{ edit_student.id }}">
+        <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 150px;"><input type="text" name="roll_no" value="{{ edit_student.roll_no }}" placeholder="Roll No" required></div>
+            <div style="flex: 1; min-width: 150px;"><input type="text" name="student_name" value="{{ edit_student.student_name }}" placeholder="Student Name" required></div>
+            <div style="flex: 1; min-width: 150px;"><input type="text" name="father_name" value="{{ edit_student.father_name }}" placeholder="Father Name" required></div>
+            <div style="flex: 1; min-width: 150px;"><input type="text" name="phone_number" value="{{ edit_student.phone_number }}" placeholder="Contact Number"></div>
+            <div style="flex: 1; min-width: 150px;"><input type="text" name="program" value="{{ edit_student.program }}" placeholder="Program" required></div>
+            <div style="flex: 1; min-width: 150px;"><input type="text" name="part" value="{{ edit_student.part }}" placeholder="Part/Semester" required></div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button type="submit" class="btn-success" style="width: auto; padding: 10px 25px;">💾 {% if current_lang == 'ur' %}تفصیلات محفوظ کریں{% else %}Save Changes{% endif %}</button>
+            <a href="/admin/dashboard" style="background: #6c757d; color: white; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 14px; display: inline-block; margin-top: 8px;">❌ {% if current_lang == 'ur' %}کنسل کریں{% else %}Cancel{% endif %}</a>
+        </div>
+    </form>
+</div>
+{% endif %}
 
 <div class="card full-width" style="margin-top: 20px; overflow-x: auto;"> 
     <h3>{% if current_lang == 'ur' %}🧑‍🏫 رجسٹرڈ اساتذہ کی لسٹ اور پاس ورڈ آڈٹ{% else %}🧑‍🏫 Registered Teachers List & Passwords Audit{% endif %}</h3> 
@@ -250,11 +289,14 @@
                 </td> 
                 <td>{{ teacher.subject if teacher.subject else '-' }}</td> 
                 <td> 
-                    <form method="POST" action="/admin/dashboard" style="display:inline;"> 
-                        <input type="hidden" name="action" value="delete_teacher"> 
-                        <input type="hidden" name="id" value="{{ teacher['id'] }}"> 
-                        <button type="submit" class="del-btn" onclick="return confirm('Delete Teacher?')">{% if current_lang == 'ur' %}حذف کریں ❌{% else %}Delete ❌{% endif %}</button> 
-                    </form> 
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <a href="/admin/dashboard?edit_t={{ teacher['id'] }}" style="background: #007bff; color: white; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; display: inline-block;">📝</a>
+                        <form method="POST" action="/admin/dashboard" style="display:inline; margin: 0;"> 
+                            <input type="hidden" name="action" value="delete_teacher"> 
+                            <input type="hidden" name="id" value="{{ teacher['id'] }}"> 
+                            <button type="submit" class="del-btn" onclick="return confirm('Delete Teacher?')">❌</button> 
+                        </form> 
+                    </div>
                 </td> 
             </tr> 
             {% endfor %} 
@@ -328,11 +370,14 @@
                 <td>{{ student.part }}</td> 
                 <td style="color: #007bff; font-weight: bold;">{{ student.percentage }}%</td> 
                 <td> 
-                    <form method="POST" action="/admin/dashboard" style="display:inline;"> 
-                        <input type="hidden" name="action" value="delete_student"> 
-                        <input type="hidden" name="id" value="{{ student['id'] }}"> 
-                        <button type="submit" class="del-btn" onclick="return confirm('Delete Student?')">❌</button> 
-                    </form> 
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <a href="/admin/dashboard?edit_s={{ student['id'] }}" style="background: #007bff; color: white; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; text-decoration: none; display: inline-block;">📝</a>
+                        <form method="POST" action="/admin/dashboard" style="display:inline; margin: 0;"> 
+                            <input type="hidden" name="action" value="delete_student"> 
+                            <input type="hidden" name="id" value="{{ student['id'] }}"> 
+                            <button type="submit" class="del-btn" onclick="return confirm('Delete Student?')">❌</button> 
+                        </form> 
+                    </div>
                 </td> 
             </tr> 
             {% endfor %} 

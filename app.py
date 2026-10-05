@@ -168,7 +168,7 @@ def login(role):
         </body>
     </html>
     """
-# 3. COLLEGE ADMIN DASHBOARD LOGIC
+# 3. COLLEGE ADMIN DASHBOARD LOGIC (Updated with Edit Record Processor)
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
@@ -199,26 +199,34 @@ def admin_dashboard():
             cursor.execute('INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) VALUES (%s, %s, %s, %s, %s, %s, %s)',
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], college_id))
             conn.commit()
+        elif action == 'edit_teacher_admin':
+            cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s AND college_id=%s',
+                         (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id'], college_id))
+            conn.commit()
+        elif action == 'edit_student_admin':
+            cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s AND college_id=%s',
+                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id'], college_id))
+            conn.commit()
         elif action == 'delete_teacher':
             teacher_id = request.form.get('id')
-            cursor.execute('DELETE FROM teachers WHERE id=%s', (teacher_id,))
+            cursor.execute('DELETE FROM teachers WHERE id=%s AND college_id=%s', (teacher_id, college_id))
             conn.commit()
         elif action == 'delete_student':
             student_id = request.form.get('id')
-            cursor.execute('DELETE FROM students WHERE id=%s', (student_id,))
+            cursor.execute('DELETE FROM students WHERE id=%s AND college_id=%s', (student_id, college_id))
             conn.commit()
             
     if selected_program and selected_part:
-        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s AND part = %s', (college_id, selected_program, selected_part))
+        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s AND part = %s ORDER BY roll_no ASC', (college_id, selected_program, selected_part))
     elif selected_program:
-        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s', (college_id, selected_program))
+        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s ORDER BY roll_no ASC', (college_id, selected_program))
     elif selected_part:
-        cursor.execute('SELECT * FROM students WHERE college_id = %s AND part = %s', (college_id, selected_part))
+        cursor.execute('SELECT * FROM students WHERE college_id = %s AND part = %s ORDER BY roll_no ASC', (college_id, selected_part))
     else:
-        cursor.execute('SELECT * FROM students WHERE college_id = %s', (college_id,))
+        cursor.execute('SELECT * FROM students WHERE college_id = %s ORDER BY roll_no ASC', (college_id,))
         
     raw_students = cursor.fetchall()
-    cursor.execute('SELECT * FROM teachers WHERE college_id = %s', (college_id,))
+    cursor.execute('SELECT * FROM teachers WHERE college_id = %s ORDER BY id DESC', (college_id,))
     raw_teachers = cursor.fetchall()
     
     teachers = [dict(t) for t in raw_teachers]
@@ -233,10 +241,25 @@ def admin_dashboard():
         present_days = cursor.fetchone()['cnt']
         s_dict['percentage'] = round((present_days / total_days) * 100, 1) if total_days > 0 else 0.0
         students.append(s_dict)
+
+    # Inline dynamic overlay editor variables
+    edit_t_id = request.args.get('edit_t')
+    edit_s_id = request.args.get('edit_s')
+    edit_teacher_data = None
+    edit_student_data = None
+    
+    if edit_t_id:
+        cursor.execute('SELECT * FROM teachers WHERE id=%s AND college_id=%s', (edit_t_id, college_id))
+        edit_teacher_data = cursor.fetchone()
+    if edit_s_id:
+        cursor.execute('SELECT * FROM students WHERE id=%s AND college_id=%s', (edit_s_id, college_id))
+        edit_student_data = cursor.fetchone()
         
     conn.close()
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
-                           current_user=current_username, selected_program=selected_program, selected_part=selected_part, current_lang=current_lang)
+                           current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
+                           current_lang=current_lang, edit_teacher=edit_teacher_data, edit_student=edit_student_data)
+
 # 4. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
 def developer_dashboard():
