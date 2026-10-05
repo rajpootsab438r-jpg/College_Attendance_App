@@ -63,13 +63,13 @@ def welcome():
                     position: fixed; top: 20px; right: 20px; z-index: 9999;
                 }}
                 .lang-btn {{
-                    background: #ffffff; color: #6f42c1; border: 1px solid #6f42c1;
+                    background: #ffffff; color: #28a745; border: 1px solid #28a745;
                     padding: 8px 16px; font-weight: bold; border-radius: 20px;
                     text-decoration: none; font-size: 13px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);
                     transition: 0.2s;
                 }}
                 .lang-btn:hover {{
-                    background: #6f42c1; color: white;
+                    background: #28a745; color: white;
                 }}
                 .container {{ 
                     background: #ffffff; padding: 40px; border-radius: 16px; 
@@ -83,8 +83,8 @@ def welcome():
                 .btn-admin:hover {{ background-color: #0056b3; }}
                 .btn-teacher {{ background-color: #28a745; }}
                 .btn-teacher:hover {{ background-color: #218838; }}
-                .btn-dev {{ background-color: #6f42c1; }}
-                .btn-dev:hover {{ background-color: #5a32a3; }}
+                .btn-dev {{ background-color: #198754; }}
+                .btn-dev:hover {{ background-color: #146c43; }}
             </style>
         </head>
         <body>
@@ -98,7 +98,7 @@ def welcome():
                 <a href="/login/teacher" class="btn btn-teacher">{t['teacher_btn']}</a>
                 <a href="/login/developer" class="btn btn-dev">{t['dev_btn']}</a>
                 <div style="margin-top: 15px; font-size: 13px; color: #555; font-weight: 500;"> {t['support']}: 03426600749</div>
-                <div style="margin-top: 10px; font-size: 14px; color: #6f42c1; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
+                <div style="margin-top: 10px; font-size: 14px; color: #28a745; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
             </div>
         </body>
     </html>
@@ -135,7 +135,7 @@ def login(role):
                 conn.close()
                 return redirect(url_for('teacher_dashboard'))
         elif role == 'developer':
-            # 🛠️ UPDATED MASTER CREDENTIALS: Username Cukur | Password Cukur301r
+            # 🛠️ AUTHORIZED MASTER SIGNATURE: Username Cukur | Password Cukur301r
             if username == "Cukur" and password == "Cukur301r":
                 session['role'] = 'developer'
                 session['user'] = 'Cukur'
@@ -153,7 +153,7 @@ def login(role):
             body {{ font-family: 'Segoe UI', Arial; background: #f4f6f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin:0; }}
             .box {{ background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 340px; text-align: center; }}
             input {{ width: 100%; padding: 11px; margin: 10px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; }}
-            button {{ width: 100%; padding: 11px; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 10px; }}
+            button {{ width: 100%; padding: 11px; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 10px; }}
         </style></head>
         <body>
             <div class="box">
@@ -242,7 +242,6 @@ def admin_dashboard():
         s_dict['percentage'] = round((present_days / total_days) * 100, 1) if total_days > 0 else 0.0
         students.append(s_dict)
 
-    # Inline dynamic overlay editor variables
     edit_t_id = request.args.get('edit_t')
     edit_s_id = request.args.get('edit_s')
     edit_teacher_data = None
@@ -259,7 +258,6 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_lang=current_lang, edit_teacher=edit_teacher_data, edit_student=edit_student_data)
-
 # 4. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
 def developer_dashboard():
@@ -278,6 +276,10 @@ def developer_dashboard():
         elif action == 'update_college_periods':
             cursor.execute('UPDATE admins SET total_periods=%s WHERE id=%s', (request.form['total_periods'], request.form['college_id']))
             conn.commit()
+        elif action == 'edit_college_admin_dev':
+            cursor.execute('UPDATE admins SET college_name=%s, username=%s, password=%s, total_periods=%s WHERE id=%s',
+                         (request.form['college_name'], request.form['username'], request.form['password'], request.form['total_periods'], request.form['id']))
+            conn.commit()
         elif action == 'update_teacher_dev':
             cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s',
                          (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id']))
@@ -287,21 +289,25 @@ def developer_dashboard():
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id']))
             conn.commit()
             
-    cursor.execute('SELECT * FROM admins')
+    cursor.execute('SELECT * FROM admins ORDER BY id DESC')
     colleges = cursor.fetchall()
     selected_college_id = request.args.get('filter_college')
     
     if selected_college_id:
-        cursor.execute('SELECT t.*, a.college_name FROM teachers t JOIN admins a ON t.college_id = a.id WHERE t.college_id = %s', (selected_college_id,))
+        cursor.execute('SELECT t.*, a.college_name FROM teachers t JOIN admins a ON t.college_id = a.id WHERE t.college_id = %s ORDER BY t.id DESC', (selected_college_id,))
         all_teachers = cursor.fetchall()
-        cursor.execute('SELECT s.*, a.college_name FROM students s JOIN admins a ON s.college_id = a.id WHERE s.college_id = %s', (selected_college_id,))
+        cursor.execute('SELECT s.*, a.college_name FROM students s JOIN admins a ON s.college_id = a.id WHERE s.college_id = %s ORDER BY s.roll_no ASC', (selected_college_id,))
         all_students = cursor.fetchall()
     else:
-        cursor.execute('SELECT t.*, a.college_name FROM teachers t JOIN admins a ON t.college_id = a.id')
+        cursor.execute('SELECT t.*, a.college_name FROM teachers t JOIN admins a ON t.college_id = a.id ORDER BY t.id DESC')
         all_teachers = cursor.fetchall()
-        cursor.execute('SELECT s.*, a.college_name FROM students s JOIN admins a ON s.college_id = a.id')
+        cursor.execute('SELECT s.*, a.college_name FROM students s JOIN admins a ON s.college_id = a.id ORDER BY s.id DESC')
         all_students = cursor.fetchall()
 
+    edit_c_data = None
+    if request.args.get('edit_c'):
+        cursor.execute('SELECT * FROM admins WHERE id=%s', (request.args.get('edit_c'),))
+        edit_c_data = cursor.fetchone()
     edit_t_data = None
     if request.args.get('edit_t'):
         cursor.execute('SELECT * FROM teachers WHERE id=%s', (request.args.get('edit_t'),))
@@ -310,16 +316,17 @@ def developer_dashboard():
     if request.args.get('edit_s'):
         cursor.execute('SELECT * FROM students WHERE id=%s', (request.args.get('edit_s'),))
         edit_s_data = cursor.fetchone()
-        
-    college_rows = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#6f42c1;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #dee2e6;padding:12px;'>{c['username']}</td><td style='border:1px solid #dee2e6;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #dee2e6;padding:12px;'><form method='POST' style='margin:0;display:flex;gap:5px;'><input type='hidden' name='action' value='update_college_periods'><input type='hidden' name='college_id' value='{c['id']}'><input type='number' name='total_periods' value='{c['total_periods']}' style='width:50px;padding:4px;margin:0;'><button type='submit' style='width:auto;padding:4px 8px;font-size:12px;background:#28a745;margin:0;'>Set</button></form></td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/delete/college/{c['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;' onclick='return confirm(\"Delete College?\")'>Delete ❌</a></td></tr>" for c in colleges])
-    teacher_rows = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #dee2e6;padding:12px;'>{t['name']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{t['username']}</td><td style='border:1px solid #dee2e6;padding:12px;color:#28a745;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{t['subject']}</td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/dashboard?edit_t={t['id']}' style='color:#007bff;font-weight:bold;text-decoration:none;margin-right:10px;'>Edit 📝</a> | <a href='/developer/delete/teacher/{t['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;' onclick='return confirm(\"Delete Teacher?\")'>Delete ❌</a></td></tr>" for t in all_teachers])
-    student_rows = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #dee2e6;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #dee2e6;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #dee2e6;padding:12px;'><a href='/developer/dashboard?edit_s={s['id']}' style='color:#007bff;font-weight:bold;text-decoration:none;margin-right:10px;'>Edit 📝</a> | <a href='/developer/delete/student/{s['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;' onclick='return confirm(\"Delete Student?\")'>Delete ❌</a></td></tr>" for s in all_students])
+    college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{c['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/college/{c['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Account Master?\")'>Delete ❌</a></div></td></tr>" for c in colleges])
+    teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;color:#198754;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['subject']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/teacher/{t['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Teacher?\")'>Delete ❌</a></div></td></tr>" for t in all_teachers])
+    student_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_s={s['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/student/{s['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Student?\")'>Delete ❌</a></div></td></tr>" for s in all_students])
 
     edit_box = ""
-    if edit_t_data:
-        edit_box = f"<div style='background:#fff3cd; padding:20px; border-radius:8px; margin-bottom:20px;'><h4 style='margin:0 0 10px 0;'>📝 Edit Faculty Teacher</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_teacher_dev'><input type='hidden' name='id' value='{edit_t_data['id']}'><input type='text' name='teacher_id' value='{edit_t_data['teacher_id']}' placeholder='ID' style='width:120px;'><input type='text' name='name' value='{edit_t_data['name']}' placeholder='Name'><input type='text' name='username' value='{edit_t_data['username']}' placeholder='User'><input type='text' name='password' value='{edit_t_data['password']}' placeholder='Pass'><input type='text' name='subject' value='{edit_t_data['subject']}' placeholder='Subject'><button type='submit' style='width:auto;background:#28a745;'>Save Updates</button></form></div>"
+    if edit_c_data:
+        edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit College Admin Account</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='edit_college_admin_dev'><input type='hidden' name='id' value='{edit_c_data['id']}'><input type='text' name='college_name' value='{edit_c_data['college_name']}' placeholder='College Name' style='flex:1;min-width:200px;'><input type='text' name='username' value='{edit_c_data['username']}' placeholder='Admin User'><input type='text' name='password' value='{edit_c_data['password']}' placeholder='Admin Pass'><input type='number' name='total_periods' value='{edit_c_data['total_periods']}' style='width:80px;'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
+    elif edit_t_data:
+        edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Faculty Teacher</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_teacher_dev'><input type='hidden' name='id' value='{edit_t_data['id']}'><input type='text' name='teacher_id' value='{edit_t_data['teacher_id']}' placeholder='ID' style='width:120px;'><input type='text' name='name' value='{edit_t_data['name']}' placeholder='Name'><input type='text' name='username' value='{edit_t_data['username']}' placeholder='User'><input type='text' name='password' value='{edit_t_data['password']}' placeholder='Pass'><input type='text' name='subject' value='{edit_t_data['subject']}' placeholder='Subject'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
     elif edit_s_data:
-        edit_box = f"<div style='background:#fff3cd; padding:20px; border-radius:8px; margin-bottom:20px;'><h4 style='margin:0 0 10px 0;'>📝 Edit Student Record</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_student_dev'><input type='hidden' name='id' value='{edit_s_data['id']}'><input type='text' name='roll_no' value='{edit_s_data['roll_no']}' placeholder='Roll' style='width:120px;'><input type='text' name='student_name' value='{edit_s_data['student_name']}' placeholder='Name'><input type='text' name='father_name' value='{edit_s_data['father_name']}' placeholder='Father'><input type='text' name='phone_number' value='{edit_s_data['phone_number']}' placeholder='Phone'><input type='text' name='program' value='{edit_s_data['program']}' placeholder='Program'><input type='text' name='part' value='{edit_s_data['part']}' placeholder='Part'><button type='submit' style='width:auto;background:#28a745;'>Save Updates</button></form></div>"
+        edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Student Record</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_student_dev'><input type='hidden' name='id' value='{edit_s_data['id']}'><input type='text' name='roll_no' value='{edit_s_data['roll_no']}' placeholder='Roll' style='width:120px;'><input type='text' name='student_name' value='{edit_s_data['student_name']}' placeholder='Name'><input type='text' name='father_name' value='{edit_s_data['father_name']}' placeholder='Father'><input type='text' name='phone_number' value='{edit_s_data['phone_number']}' placeholder='Phone'><input type='text' name='program' value='{edit_s_data['program']}' placeholder='Program'><input type='text' name='part' value='{edit_s_data['part']}' placeholder='Part'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
     conn.close()
     return """
     <html>
@@ -327,23 +334,23 @@ def developer_dashboard():
             <title>Dev Dashboard</title>
             <style>
                 body { font-family: 'Segoe UI', Arial, sans-serif; padding: 25px; background: #f4f6f9; margin: 0; }
-                h2 { color: #1e1b4b; margin: 0; }
-                h3 { margin-top: 0; color: #495057; border-bottom: 2px solid #e9ecef; padding-bottom: 8px; }
-                .header-bar { background: #6f42c1; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+                h2 { color: #0f5132; margin: 0; }
+                h3 { margin-top: 0; color: #146c43; border-bottom: 2px solid #a3cfbb; padding-bottom: 8px; }
+                .header-bar { background: #198754; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; box-shadow: 0 4px 12px rgba(25,135,84,0.15); }
                 .grid { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px; }
-                .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); flex: 1; min-width: 320px; }
+                .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); flex: 1; min-width: 320px; border: 1px solid #eef2f6; }
                 input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; }
-                button { width: 100%; padding: 10px; background: #6f42c1; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 5px; }
-                button:hover { background: #5a32a3; }
+                button { width: 100%; padding: 10px; background: #198754; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 5px; }
+                button:hover { background: #146c43; }
                 table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; border-radius: 8px; overflow: hidden; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); }
-                th { background-color: #e9ecef !important; color: #495057 !important; font-weight: bold; border: 1px solid #dee2e6; padding: 12px; text-align: left; }
-                tr:nth-child(even) { background-color: #f8f9fa; }
+                th { background-color: #d1e7dd !important; color: #0f5132 !important; font-weight: bold; border: 1px solid #a3cfbb; padding: 12px; text-align: left; }
+                tr:nth-child(even) { background-color: #f8fafc; }
                 .full-width { flex: 1 1 100%; }
             </style>
         </head>
         <body>
             <div class="header-bar">
-                <h2>🛠 shrink; Çukur Master Developer Panel Control Console</h2>
+                <h2>🛠️ Çukur Master Developer Panel Control Console</h2>
                 <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
                 <a href="/logout" style="color: white; font-weight: bold; text-decoration: none; background: rgba(0,0,0,0.2); padding: 8px 15px; border-radius: 5px;">Log Out ➡️</a>
             </div>
@@ -460,7 +467,6 @@ def teacher_dashboard():
             cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
                            (s['roll_no'], selected_date, int(selected_period), college_id))
             att_record = cursor.fetchone()
-            # 🛠️ FIXED STATE INDICATOR: Database mein record na ho to 100% forced safaid khali block rahega
             s_dict['saved_status'] = att_record['status'] if att_record else ''
             students.append(s_dict)
     conn.close()
@@ -468,7 +474,6 @@ def teacher_dashboard():
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
 
-# ⚡ Instant Live Save Gateway (AJAX Engine Updated For Date, Period & Blanks Map)
 @app.route('/teacher/quick_attendance', methods=['POST'])
 def quick_attendance():
     if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
