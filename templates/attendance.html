@@ -4,19 +4,41 @@
     <title>Teacher Attendance Portal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; }
-        .header { background: #28a745; color: white; padding: 15px 30px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .logout-btn { color: white; text-decoration: none; font-weight: bold; background: #218838; padding: 8px 15px; border-radius: 5px; }
-        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; position: relative; }
-        h3 { margin-top: 0; color: #495057; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; transition: max-width 0.3s ease; margin-left: auto; margin-right: auto; }
+        
+        /* 📱 Mobile Responsive Header Optimization Layout */
+        .header { background: #28a745; color: white; padding: 20px 25px; border-radius: 12px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        @media (min-width: 600px) {
+            .header { flex-direction: row; justify-content: space-between; align-items: center; }
+        }
+        .header h1 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; }
+        .header-meta-info { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+        @media (min-width: 600px) { .header-meta-info { text-align: right; align-items: flex-end; } }
+        
+        .logout-btn { color: white; text-decoration: none; font-weight: bold; background: #218838; padding: 6px 14px; border-radius: 6px; display: inline-block; transition: 0.2s; font-size: 13px; margin-top: 4px; }
+        .logout-btn:hover { background: #1e7e34; }
+        
+        /* 🍔 Top Floating Navigation Switcher Bar Console Layout */
+        .top-nav-bar { background: #5a32a3; color: white; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(90,50,163,0.2); }
+        .burger-menu-btn { background: rgba(255,255,255,0.15); border: none; color: white; font-size: 22px; cursor: pointer; padding: 6px 12px; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
+        .burger-menu-btn:hover { background: rgba(255,255,255,0.25); }
+        
+        /* ⚙️ Context Menu Container Dropdown Drawer */
+        .nav-dropdown-menu { display: none; background: white; border: 1px solid #dee2e6; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); position: absolute; z-index: 10000; width: 200px; margin-top: 5px; overflow: hidden; }
+        .nav-dropdown-menu a, .nav-dropdown-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; background: none; border: none; color: #495057; text-align: left; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; box-sizing: border-box; }
+        .nav-dropdown-menu a:hover, .nav-dropdown-menu button:hover { background: #f8f9fa; color: #6f42c1; }
+
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.04); margin-bottom: 20px; position: relative; border: 1px solid #eef2f6; }
+        h3 { margin-top: 0; color: #2d3748; }
         .setup-form { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
-        .setup-form select, .setup-form input { padding: 10px; border: 1px solid #ced4da; border-radius: 4px; min-width: 140px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
-        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; }
-        th { background-color: #e9ecef; color: #495057; }
-        tr:nth-child(even) { background-color: #f8f9fa; }
-        .info-bar { background: #e2f0d9; color: #385723; padding: 12px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
+        .setup-form select, .setup-form input { padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; min-width: 140px; box-sizing: border-box; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; border-radius: 8px; overflow: hidden; }
+        th, td { border: 1px solid #e2e8f0; padding: 12px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; }
+        th { background-color: #f1f5f9; color: #475569; font-weight: 600; }
+        tr:nth-child(even) { background-color: #f8fafc; }
+        
+        .info-bar { background: #e2f0d9; color: #385723; padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; font-size: 14px; }
         .badge-present { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
         .badge-absent { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
         .action-container { display: flex; gap: 10px; }
@@ -48,14 +70,71 @@
             })
             .catch(error => console.error('Error:', error));
         }
+
+        /* 🖥️ Simulation Desktop Switcher Mechanism Engine */
+        function toggleDesktopView() {
+            var metaViewport = document.querySelector('meta[name="viewport"]');
+            var isDesktop = localStorage.getItem('simulation_desktop_view_teacher') === 'true';
+            
+            if (!isDesktop) {
+                metaViewport.setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
+                document.body.style.maxWidth = '1200px';
+                localStorage.setItem('simulation_desktop_view_teacher', 'true');
+                document.getElementById('desktop-toggle-text').innerText = "📱 Mobile View";
+            } else {
+                metaViewport.setAttribute('content', 'width=device-width, initial-scale=1.0');
+                document.body.style.maxWidth = '100%';
+                localStorage.setItem('simulation_desktop_view_teacher', 'false');
+                document.getElementById('desktop-toggle-text').innerText = "🖥️ Desktop View";
+            }
+            toggleMenuDrawer();
+        }
+
+        document.addEventListener("DOMContentLoaded", function() {
+            if (localStorage.getItem('simulation_desktop_view_teacher') === 'true') {
+                var metaViewport = document.querySelector('meta[name="viewport"]');
+                metaViewport.setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
+                document.body.style.maxWidth = '1200px';
+                document.getElementById('desktop-toggle-text').innerText = "📱 Mobile View";
+            }
+        });
+
+        function toggleMenuDrawer() {
+            var menu = document.getElementById('nav-dropdown-box');
+            menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
+        }
+        
+        window.onclick = function(event) {
+            if (!event.target.matches('.burger-menu-btn') && !event.target.closest('.burger-menu-btn')) {
+                var dropdowns = document.getElementsByClassName("nav-dropdown-menu");
+                for (var i = 0; i < dropdowns.length; i++) {
+                    dropdowns[i].style.display = "none";
+                }
+            }
+        }
     </script>
 </head>
 <body>
+
+<!-- ⚡ Top Custom Functional Purple Navigation Control Bar -->
+<div class="top-nav-bar">
+    <div style="position: relative; display: inline-block;">
+        <button class="burger-menu-btn" onclick="toggleMenuDrawer()">☰</button>
+        <div id="nav-dropdown-box" class="nav-dropdown-menu">
+            <button type="button" onclick="toggleDesktopView()">
+                <span id="desktop-toggle-text">🖥️ Desktop View</span>
+            </button>
+            <a href="/logout">Logout ➡️</a>
+        </div>
+    </div>
+    <div style="font-weight: 700; letter-spacing: 0.5px; font-size: 15px;">Çukur Faculty Center</div>
+</div>
+
     <div class="header">
         <h1>{% if current_lang == 'ur' %}🧑‍🏫 ٹیچر پورٹل | کتاب: {{ subject }}{% else %}🧑‍🏫 Teacher Portal | Book: {{ subject }}{% endif %}</h1>
-        <div style="display: flex; align-items: center; gap: 15px;">
-            <span style="font-weight: bold;">{% if current_lang == 'ur' %}خوش آمدید، {{ teacher_name }}{% else %}Welcome, {{ teacher_name }}{% endif %}</span>
-            <a href="/logout" class="logout-btn">{% if current_lang == 'ur' %}لاگ آؤٹ ➡️{% else %}Log Out ➡️{% endif %}</a>
+        <div class="header-meta-info">
+            <div>{% if current_lang == 'ur' %}خوش آمدید، {{ teacher_name }}{% else %}Welcome, {{ teacher_name }}{% endif %}</div>
+            <div><a href="/logout" class="logout-btn">{% if current_lang == 'ur' %}لاگ آؤٹ ➡️{% else %}Log Out ➡️{% endif %}</a></div>
         </div>
     </div>
 
@@ -106,7 +185,7 @@
         </form>
     </div>
     {% if students %}
-    <div class="card">
+    <div class="card" style="overflow-x: auto;">
         <div class="info-bar">
             {% if current_lang == 'ur' %}📍 منتخب کلاس: {{ selected_program }} ({{ selected_part }}) | 📅 تاریخ: {{ selected_date }} | ⏱️ پیریڈ: {{ selected_period }}{% else %}📍 Selected: {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }} | ⏱️ Period: {{ selected_period }}{% endif %}
         </div>
@@ -128,7 +207,6 @@
                     <td>{{ student.student_name }}</td>
                     <td>{{ student.father_name }}</td>
                     <td id="status-box-{{ student.roll_no }}">
-                        <!-- 🛠️ Safaid aur completely blank check rendering condition logic -->
                         {% if student.saved_status == 'Present' %}
                             <span class="badge-present">{% if current_lang == 'ur' %}حاضر ✅{% else %}Present ✅{% endif %}</span>
                         {% elif student.saved_status == 'Absent' %}
