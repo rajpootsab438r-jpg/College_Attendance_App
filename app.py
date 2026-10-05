@@ -503,6 +503,85 @@ def quick_attendance():
 def logout():
     session.clear()
     return redirect(url_for('welcome'))
+# 📄 DYNAMIC STUDENT REPORT GENERATOR ENGINE (Admin Custom Feature)
+@app.route('/admin/download_student_report/<int:student_id>')
+def download_student_report(student_id):
+    if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
+    college_id = session.get('user_id')
+    
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=DictCursor)
+    
+    # 1. Student details fetch karein
+    cursor.execute('SELECT * FROM students WHERE id = %s AND college_id = %s', (student_id, college_id))
+    student = cursor.fetchone()
+    if not student:
+        conn.close()
+        return "<h3>Student record not found!</h3>", 404
+        
+    roll = student['roll_no']
+    
+    # 2. Total logging record match statistics fetch karein
+    cursor.execute('SELECT COUNT(*) as cnt FROM attendance WHERE student_roll = %s AND college_id = %s', (roll, college_id))
+    total_days = cursor.fetchone()['cnt']
+    cursor.execute('SELECT COUNT(*) as cnt FROM attendance WHERE student_roll = %s AND status = \'Present\' AND college_id = %s', (roll, college_id))
+    present_days = cursor.fetchone()['cnt']
+    percentage = round((present_days / total_days) * 100, 1) if total_days > 0 else 0.0
+    
+    # 3. Day-by-day and Period-by-period details logs matrix load karein
+    cursor.execute('SELECT attendance_date, period_no, status, marked_by FROM attendance WHERE student_roll = %s AND college_id = %s ORDER BY attendance_date DESC, period_no ASC', (roll, college_id))
+    records = cursor.fetchall()
+    conn.close()
+    
+    # 🎨 Build HTML Template that translates directly into browser view layout printables
+    rows_html = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:10px;'>{r['attendance_date']}</td><td style='border:1px solid #dee2e6;padding:10px;text-align:center;'>Period {r['period_no']}</td><td style='border:1px solid #dee2e6;padding:10px;font-weight:bold;color:{'#198754' if r['status']=='Present' else '#dc3545'};'>{r['status']}</td><td style='border:1px solid #dee2e6;padding:10px;'>{r['marked_by']}</td></tr>" for r in records])
+    
+    if not records:
+        rows_html = "<tr><td colspan='4' style='text-align:center;padding:20px;color:#6c757d;'>No attendance history logged yet for this dynamic student profile.</td></tr>"
+
+    html_report = f"""
+    <html>
+    <head>
+        <title>Report_{roll}</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 30px; color: #333; }}
+            .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }}
+            .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }}
+            .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+            th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; text-align: left; }}
+            .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; font-weight: bold; }}
+        </style>
+    </head>
+    <body onload="window.print()">
+        <div class="report-header">
+            <h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2>
+            <p style="margin:5px 0 0 0;color:#666;font-size:13px;">Official Dynamic Attendance Ledger Report Sheets</p>
+        </div>
+        <div class="student-info">
+            <div class="info-item"><b>Student Name:</b> {student['student_name']}</div>
+            <div class="info-item"><b>Father Name:</b> {student['father_name']}</div>
+            <div class="info-item"><b>Roll Number:</b> {roll}</div>
+            <div class="info-item"><b>Class Program:</b> {student['program']} ({student['part']})</div>
+            <div class="info-item"><b>Total Slots Checked:</b> {total_days}</div>
+            <div class="info-item"><b>Attendance Ratio:</b> <span class="badge-pct">{percentage}%</span></div>
+        </div>
+        <h3>📋 Step-by-Step Historical Attendance Breakdown</h3>
+        <table>
+            <thead>
+                <tr><th>Logged Date</th><th>Lecture Slot</th><th>Status Profile</th><th>Marked By (Faculty)</th></tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+        <div style="margin-top:50px;text-align:center;font-size:12px;color:#999;border-top:1px dashed #ccc;padding-top:10px;">
+            This is an authentic verified computer-generated transcript statement securely backed by Neon PostgreSQL Cloud Engine. AI responses may include mistakes.
+        </div>
+    </body>
+    </html>
+    """
+    return html_report
 
 application = app
 
