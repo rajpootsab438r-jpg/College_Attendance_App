@@ -229,6 +229,69 @@
         {% if current_lang == 'ur' %}⚠️ اس کلاس میں کوئی طالب علم موجود نہیں ہے!{% else %}⚠️ No student found in this class!{% endif %}
     </div>
     {% endif %}
+<script>
+    // 1. Service Worker Registry System Activation
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('Çukur Offline Service Worker Registered! ✅');
+            }).catch(err => console.log('Registration Failed: ', err));
+        });
+    }
+
+    // 2. Offline Mode Data Caching Local Engine (IndexedDB Layer Setup)
+    function saveOfflineRecord(url, payload) {
+        let openDB = indexedDB.open("CukurOfflineDB", 1);
+        openDB.onupgradeneeded = function() {
+            let db = openDB.result;
+            if (!db.objectStoreNames.contains("pending_sync")) {
+                db.createObjectStore("pending_sync", { autoIncrement: true });
+            }
+        };
+        openDB.onsuccess = function() {
+            let db = openDB.result;
+            let tx = db.transaction("pending_sync", "readwrite");
+            let store = tx.objectStore("pending_sync");
+            store.add({ url: url, data: payload, timestamp: new Date() });
+            console.log("Internet nahi hai! Data mobile memory (IndexedDB) mein save ho gaya. 💾");
+            
+            // Background sync request trigger karna
+            if ('serviceWorker' in navigator && 'SyncManager' in window) {
+                navigator.serviceWorker.ready.then(reg => {
+                    return reg.sync.register('sync-attendance');
+                });
+            }
+        };
+    }
+
+    // 🔄 Listener: Jaise hi device online aaye, automatic cloud merge chalao
+    window.addEventListener('online', function() {
+        console.log("Internet wapas aa gaya! Cloud sync shuru ho raha hai... 🌐");
+        let openDB = indexedDB.open("CukurOfflineDB", 1);
+        openDB.onsuccess = function() {
+            let db = openDB.result;
+            let tx = db.transaction("pending_sync", "readwrite");
+            let store = tx.objectStore("pending_sync");
+            let request = store.getAll();
+            
+            request.onsuccess = function() {
+                let records = request.result;
+                records.forEach(item => {
+                    fetch(item.url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(item.data)
+                    }).then(res => {
+                        // Kamyabi se sync hone par local data delete karna
+                        let cleanTx = db.transaction("pending_sync", "readwrite");
+                        cleanTx.objectStore("pending_sync").clear();
+                        console.log("Offline data cloud database mein successfully merge ho gaya! 🚀");
+                    });
+                });
+            };
+        };
+    });
+</script>
 
 </body>
 </html>
