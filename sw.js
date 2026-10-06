@@ -1,28 +1,27 @@
-const CACHE_NAME = 'cukur-cache-v1';
-const ASSETS = [
+const CACHE_NAME = 'cukur-attendance-v2';
+const OFFLINE_ASSETS = [
   '/',
   '/login/admin',
-  '/login/teacher',
-  '/admin/dashboard',
-  '/teacher/dashboard'
+  '/login/teacher'
 ];
 
-// Offline rehne par screens ko cache se open rakhna
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
-});
-
-self.addEventListener('fetch', (e) => {
-  e.respondWith(
-    caches.match(e.request).then(cachedResponse => {
-      return cachedResponse || fetch(e.request);
-    }).catch(() => caches.match('/'))
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(OFFLINE_ASSETS);
+    })
   );
 });
 
-// Online aate hi dynamic local data background sync trigger karna
-self.addEventListener('sync', (e) => {
-  if (e.tag === 'sync-attendance') {
-    e.waitUntil(syncOfflineDataToServer());
-  }
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      return fetch(event.request).catch(() => {
+        return caches.match('/');
+      });
+    })
+  );
 });
