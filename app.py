@@ -7,6 +7,15 @@ import io
 app = Flask(__name__)
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
 app.secret_key = "attendance_cukur_secret_key_123"
+
+@app.route('/sw.js')
+def serve_sw():
+    return send_file('sw.js', mimetype='application/javascript')
+
+@app.route('/manifest.json')
+def serve_manifest():
+    return send_file('manifest.json', mimetype='application/manifest+json')
+
 # 🌍 Neon.tech Database Connection Function
 def get_db_connection():
     DATABASE_URL = "postgresql://neondb_owner:npg_M7bJcCfdkN3e@ep-dry-cherry-b5iifiwq-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"

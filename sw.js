@@ -1,39 +1,65 @@
-const CACHE_NAME = 'cukur-attendance-v3';
-const OFFLINE_ASSETS = [
+const CACHE_NAME = 'college-attendance-cache-v1';
+const APP_SHELL = [
   '/',
-  '/login/admin',
-  '/login/teacher',
-  '/admin/dashboard',
-  '/teacher/dashboard'
+  '/manifest.json'
 ];
 
-// Offline rehne par static screens background pipelines block nahi karengi
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(OFFLINE_ASSETS);
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
+  );
 });
 
-// Network intercept function: agar offline ho to error page ki jagah cached content server show karega
 self.addEventListener('fetch', (event) => {
-  if (event.request.method === 'GET') {
-    event.respondWith(
-      fetch(event.request).then((networkResponse) => {
-        return caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, networkResponse.clone());
-          return networkResponse;
-        });
-      }).catch(() => {
-        return caches.match(event.request).then((cachedResponse) => {
-          return cachedResponse || caches.match('/');
-        });
-      })
-    );
+  const { request } = event;
+
+  if (request.method !== 'GET') {
+    return;
   }
+
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => caches.match(request)
+          .then((cached) => cached || caches.match('/'))
+        )
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request)
+      .then((cached) => {
+        if (cached) return cached;
+
+        return fetch(request)
+          .then((response) => {
+            const copy = response.clone();
+            if (request.url.startsWith(self.location.origin)) {
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            }
+            return response;
+          })
+          .catch(() => caches.match('/'));
+      })
+  );
 });
