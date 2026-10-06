@@ -1,18 +1,17 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, send_file
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime
+import io
 
 app = Flask(__name__)
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
 app.secret_key = "attendance_cukur_secret_key_123"
-
 # 🌍 Neon.tech Database Connection Function
 def get_db_connection():
     DATABASE_URL = "postgresql://neondb_owner:npg_M7bJcCfdkN3e@ep-dry-cherry-b5iifiwq-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
     conn = psycopg2.connect(DATABASE_URL)
     return conn
-
 # 🌐 Global Multi-Language System Core Engine Matrix
 LANG_DICT = {
     'en': {
@@ -22,7 +21,8 @@ LANG_DICT = {
         'teacher_btn': '🧑‍🏫 Faculty Teacher Entry',
         'dev_btn': 'Super Developer Portal',
         'support': 'Support/WhatsApp',
-        'lang_toggle': 'اردو 🇵🇰'
+        'lang_toggle': 'اردو 🇵🇰',
+        'download_catalog': '📄 Catalog'
     },
     'ur': {
         'title': 'کالج اٹینڈنس پورٹل',
@@ -31,16 +31,17 @@ LANG_DICT = {
         'teacher_btn': '🧑‍🏫 فیکلٹی ٹیچر انٹری',
         'dev_btn': 'سپر ڈیولپر پورٹل',
         'support': 'سپورٹ / واٹس ایپ',
-        'lang_toggle': 'English 🇬🇧'
+        'lang_toggle': 'English 🇬🇧',
+        'download_catalog': '📄 کیٹلاگ'
     }
 }
-
 # 🔄 Global Language Router Handler Gateway
 @app.route('/set_language/<lang>')
 def set_language(lang):
     if lang in ['en', 'ur']:
         session['lang'] = lang
     return redirect(request.referrer or url_for('welcome'))
+
 # 1. Welcome Portal (English Default with Global Multi-Language Corner Interface Switches)
 @app.route('/')
 def welcome():
@@ -60,17 +61,19 @@ def welcome():
                     background-color: #f4f6f9; direction: {'rtl' if current_lang == 'ur' else 'ltr'};
                 }}
                 .lang-switcher-bar {{
-                    position: fixed; top: 20px; right: 20px; z-index: 9999;
+                    position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; gap: 10px;
                 }}
-                .lang-btn {{
+                .lang-btn, .catalog-btn {{
                     background: #ffffff; color: #28a745; border: 1px solid #28a745;
                     padding: 8px 16px; font-weight: bold; border-radius: 20px;
                     text-decoration: none; font-size: 13px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-                    transition: 0.2s;
+                    transition: 0.2s; display: inline-flex; align-items: center;
                 }}
-                .lang-btn:hover {{
+                .lang-btn:hover, .catalog-btn:hover {{
                     background: #28a745; color: white;
                 }}
+                .catalog-btn {{ color: #198754; border-color: #198754; }}
+                .catalog-btn:hover {{ background: #198754; }}
                 .container {{ 
                     background: #ffffff; padding: 40px; border-radius: 16px; 
                     box-shadow: 0px 8px 30px rgba(0,0,0,0.15); width: 90%; max-width: 400px; z-index: 1;
@@ -89,6 +92,7 @@ def welcome():
         </head>
         <body>
             <div class="lang-switcher-bar">
+                <a href="https://vercel.app" target="_blank" class="catalog-btn">{t['download_catalog']}</a>
                 <a href="/set_language/{next_lang}" class="lang-btn">{t['lang_toggle']}</a>
             </div>
             <div class="container">
@@ -135,7 +139,6 @@ def login(role):
                 conn.close()
                 return redirect(url_for('teacher_dashboard'))
         elif role == 'developer':
-            # 🛠️ AUTHORIZED MASTER SIGNATURE: Username Cukur | Password Cukur301r
             if username == "Cukur" and password == "Cukur301r":
                 session['role'] = 'developer'
                 session['user'] = 'Cukur'
@@ -168,7 +171,7 @@ def login(role):
         </body>
     </html>
     """
-# 3. COLLEGE ADMIN DASHBOARD LOGIC (Updated with Edit Record Processor)
+# 3. COLLEGE ADMIN DASHBOARD LOGIC
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
@@ -193,19 +196,21 @@ def admin_dashboard():
             current_username = new_user
         elif action == 'add_teacher':
             cursor.execute('INSERT INTO teachers (teacher_id, name, username, password, subject, college_id) VALUES (%s, %s, %s, %s, %s, %s)',
-                         (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], college_id))
+                         (request.form.get('teacher_id', ''), request.form['name'], request.form['username'], request.form['password'], request.form.get('subject', ''), college_id))
             conn.commit()
         elif action == 'add_student':
             cursor.execute('INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], college_id))
+                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form.get('phone_number', ''), request.form['program'], request.form['part'], college_id))
             conn.commit()
         elif action == 'edit_teacher_admin':
+            # 🛠️ OPTIONAL FIXED: Teacher ID ya Subject agar khali chord dein toh null map ho kar update ho jayega
             cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s AND college_id=%s',
-                         (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id'], college_id))
+                         (request.form.get('teacher_id', ''), request.form['name'], request.form['username'], request.form['password'], request.form.get('subject', ''), request.form['id'], college_id))
             conn.commit()
         elif action == 'edit_student_admin':
+            # 🛠️ OPTIONAL FIXED: Student ka phone_number khali chordne par database record crash nahi karega
             cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s AND college_id=%s',
-                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id'], college_id))
+                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form.get('phone_number', ''), request.form['program'], request.form['part'], request.form['id'], college_id))
             conn.commit()
         elif action == 'delete_teacher':
             teacher_id = request.form.get('id')
@@ -215,8 +220,7 @@ def admin_dashboard():
             student_id = request.form.get('id')
             cursor.execute('DELETE FROM students WHERE id=%s AND college_id=%s', (student_id, college_id))
             conn.commit()
-            
-    if selected_program and selected_part:
+            if selected_program and selected_part:
         cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s AND part = %s ORDER BY roll_no ASC', (college_id, selected_program, selected_part))
     elif selected_program:
         cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s ORDER BY roll_no ASC', (college_id, selected_program))
@@ -282,13 +286,12 @@ def developer_dashboard():
             conn.commit()
         elif action == 'update_teacher_dev':
             cursor.execute('UPDATE teachers SET teacher_id=%s, name=%s, username=%s, password=%s, subject=%s WHERE id=%s',
-                         (request.form['teacher_id'], request.form['name'], request.form['username'], request.form['password'], request.form['subject'], request.form['id']))
+                         (request.form.get('teacher_id', ''), request.form['name'], request.form['username'], request.form['password'], request.form.get('subject', ''), request.form['id']))
             conn.commit()
         elif action == 'update_student_dev':
             cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s',
-                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form['phone_number'], request.form['program'], request.form['part'], request.form['id']))
+                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form.get('phone_number', ''), request.form['program'], request.form['part'], request.form['id']))
             conn.commit()
-            
     cursor.execute('SELECT * FROM admins ORDER BY id DESC')
     colleges = cursor.fetchall()
     selected_college_id = request.args.get('filter_college')
@@ -316,6 +319,7 @@ def developer_dashboard():
     if request.args.get('edit_s'):
         cursor.execute('SELECT * FROM students WHERE id=%s', (request.args.get('edit_s'),))
         edit_s_data = cursor.fetchone()
+        
     college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{c['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/college/{c['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Account Master?\")'>Delete ❌</a></div></td></tr>" for c in colleges])
     teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;color:#198754;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['subject']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/teacher/{t['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Teacher?\")'>Delete ❌</a></div></td></tr>" for t in all_teachers])
     student_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_s={s['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/student/{s['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Student?\")'>Delete ❌</a></div></td></tr>" for s in all_students])
@@ -354,9 +358,7 @@ def developer_dashboard():
                 <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
                 <a href="/logout" style="color: white; font-weight: bold; text-decoration: none; background: rgba(0,0,0,0.2); padding: 8px 15px; border-radius: 5px;">Log Out ➡️</a>
             </div>
-            
             """ + edit_box + """
-            
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>
@@ -369,7 +371,6 @@ def developer_dashboard():
                         <button type="submit">Create Account</button>
                     </form>
                 </div>
-                
                 <div class="card">
                     <h3>📋 Registered Accounts Matrix</h3>
                     <table>
@@ -381,7 +382,6 @@ def developer_dashboard():
                         </tbody>
                     </table>
                 </div>
-                
                 <div class="card full-width">
                     <h3>🧑‍🏫 Faculty Verification Audit</h3>
                     <table>
@@ -393,7 +393,6 @@ def developer_dashboard():
                         </tbody>
                     </table>
                 </div>
-                
                 <div class="card full-width">
                     <h3>🎓 Registered Student Master Log</h3>
                     <table>
@@ -473,7 +472,6 @@ def teacher_dashboard():
     return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, 
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
-
 @app.route('/teacher/quick_attendance', methods=['POST'])
 def quick_attendance():
     if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
@@ -499,89 +497,35 @@ def quick_attendance():
     conn.close()
     return {"status": "success", "current_status": status}
 
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('welcome'))
-# 📄 DYNAMIC STUDENT REPORT GENERATOR ENGINE (Admin Custom Feature)
+# 📄 CUSTOM STUDENT HISTORICAL REPORT SHEET TRANSCRIPT API
 @app.route('/admin/download_student_report/<int:student_id>')
 def download_student_report(student_id):
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
     college_id = session.get('user_id')
-    
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=DictCursor)
-    
-    # 1. Student details fetch karein
     cursor.execute('SELECT * FROM students WHERE id = %s AND college_id = %s', (student_id, college_id))
     student = cursor.fetchone()
     if not student:
         conn.close()
         return "<h3>Student record not found!</h3>", 404
-        
     roll = student['roll_no']
-    
-    # 2. Total logging record match statistics fetch karein
     cursor.execute('SELECT COUNT(*) as cnt FROM attendance WHERE student_roll = %s AND college_id = %s', (roll, college_id))
     total_days = cursor.fetchone()['cnt']
     cursor.execute('SELECT COUNT(*) as cnt FROM attendance WHERE student_roll = %s AND status = \'Present\' AND college_id = %s', (roll, college_id))
     present_days = cursor.fetchone()['cnt']
     percentage = round((present_days / total_days) * 100, 1) if total_days > 0 else 0.0
-    
-    # 3. Day-by-day and Period-by-period details logs matrix load karein
     cursor.execute('SELECT attendance_date, period_no, status, marked_by FROM attendance WHERE student_roll = %s AND college_id = %s ORDER BY attendance_date DESC, period_no ASC', (roll, college_id))
     records = cursor.fetchall()
     conn.close()
-    
-    # 🎨 Build HTML Template that translates directly into browser view layout printables
     rows_html = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:10px;'>{r['attendance_date']}</td><td style='border:1px solid #dee2e6;padding:10px;text-align:center;'>Period {r['period_no']}</td><td style='border:1px solid #dee2e6;padding:10px;font-weight:bold;color:{'#198754' if r['status']=='Present' else '#dc3545'};'>{r['status']}</td><td style='border:1px solid #dee2e6;padding:10px;'>{r['marked_by']}</td></tr>" for r in records])
-    
-    if not records:
-        rows_html = "<tr><td colspan='4' style='text-align:center;padding:20px;color:#6c757d;'>No attendance history logged yet for this dynamic student profile.</td></tr>"
+    if not records: rows_html = "<tr><td colspan='4' style='text-align:center;padding:20px;color:#6c757d;'>No attendance history logged yet.</td></tr>"
+    return f"""<html><head><title>Report_{roll}</title><style>body {{ font-family: 'Segoe UI', Arial; padding: 30px; color: #333; }} .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }} .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }} .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }} table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }} th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; }} .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; }} </style></head><body onload="window.print()"><div class="report-header"><h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2></div><div class="student-info"><div class="info-item"><b>Name:</b> {student['student_name']}</div><div class="info-item"><b>Father:</b> {student['father_name']}</div><div class="info-item"><b>Roll No:</b> {roll}</div><div class="info-item"><b>Class:</b> {student['program']} ({student['part']})</div><div class="info-item"><b>Attendance:</b> <span class="badge-pct">{percentage}%</span></div></div><table><thead><tr><th>Date</th><th>Period</th><th>Status</th><th>Faculty</th></tr></thead><tbody>{rows_html}</tbody></table></body></html>"""
 
-    html_report = f"""
-    <html>
-    <head>
-        <title>Report_{roll}</title>
-        <style>
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 30px; color: #333; }}
-            .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }}
-            .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }}
-            .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
-            th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; text-align: left; }}
-            .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; font-weight: bold; }}
-        </style>
-    </head>
-    <body onload="window.print()">
-        <div class="report-header">
-            <h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2>
-            <p style="margin:5px 0 0 0;color:#666;font-size:13px;">Official Dynamic Attendance Ledger Report Sheets</p>
-        </div>
-        <div class="student-info">
-            <div class="info-item"><b>Student Name:</b> {student['student_name']}</div>
-            <div class="info-item"><b>Father Name:</b> {student['father_name']}</div>
-            <div class="info-item"><b>Roll Number:</b> {roll}</div>
-            <div class="info-item"><b>Class Program:</b> {student['program']} ({student['part']})</div>
-            <div class="info-item"><b>Total Slots Checked:</b> {total_days}</div>
-            <div class="info-item"><b>Attendance Ratio:</b> <span class="badge-pct">{percentage}%</span></div>
-        </div>
-        <h3>📋 Step-by-Step Historical Attendance Breakdown</h3>
-        <table>
-            <thead>
-                <tr><th>Logged Date</th><th>Lecture Slot</th><th>Status Profile</th><th>Marked By (Faculty)</th></tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-        </table>
-        <div style="margin-top:50px;text-align:center;font-size:12px;color:#999;border-top:1px dashed #ccc;padding-top:10px;">
-            This is an authentic verified computer-generated transcript statement securely backed by Neon PostgreSQL Cloud Engine. AI responses may include mistakes.
-        </div>
-    </body>
-    </html>
-    """
-    return html_report
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('welcome'))
 
 application = app
 
