@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 <html {% if current_lang == 'ur' %}dir="rtl" lang="ur"{% else %}dir="ltr" lang="en"{% endif %}>
 <head>
-    <title>Teacher Attendance Portal</title>
+    <title>Teacher Attendance Portal | Çukur</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#28a745">
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; transition: max-width 0.3s ease; margin-left: auto; margin-right: auto; }
         
@@ -40,13 +42,13 @@
         
         .info-bar { background: #e2f0d9; color: #385723; padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; font-size: 14px; }
         
-        /* 🎨 Premium Dynamic Status Badges */
+        /* 🎨 Premium Dynamic Status Badges (4 Statuses Fixed) */
         .badge-present { background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
         .badge-absent { background-color: #f8d7da; color: #721c24; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; }
         .badge-leave { background-color: #fff3cd; color: #856404; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; border: 1px solid #ffeeba; }
         .badge-vacation { background-color: #e2d9f3; color: #4a148c; padding: 6px 12px; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block; border: 1px solid #d1c4e9; }
         
-        /* 🕹️ Colorful Layout Actions Control Panel */
+        /* 🕹️ Colorful Layout Actions Control Panel (4 Buttons Layout Fixed) */
         .action-container { display: flex; gap: 6px; flex-wrap: wrap; }
         .btn-action-p { background-color: #28a745; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
         .btn-action-a { background-color: #dc3545; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -116,15 +118,6 @@
             var menu = document.getElementById('nav-dropdown-box');
             menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
         }
-        
-        window.onclick = function(event) {
-            if (!event.target.matches('.burger-menu-btn') && !event.target.closest('.burger-menu-btn')) {
-                var dropdowns = document.getElementsByClassName("nav-dropdown-menu");
-                for (var i = 0; i < dropdowns.length; i++) {
-                    dropdowns[i].style.display = "none";
-                }
-            }
-        }
     </script>
 </head>
 <body>
@@ -153,12 +146,13 @@
 
     <div class="card">
         <div class="lang-switcher-bar">
-            <!-- ⚡ NEW FEATURE: Catalog Dynamic Download Link Added beside language switcher button on website view -->
-            <a href="https://vercel.app" target="_blank" class="catalog-btn">{% if current_lang == 'ur' %}📄 کیٹلاگ{% else %}📄 Catalog{% endif %}</a>
+            <!-- ⚡ FIXED LINK DIRECT REDIRECT MODULE: Catalog Dynamic Download Link Added beside language button -->
+            <a href="/download/proposal-pdf" target="_blank" class="catalog-btn">{% if current_lang == 'ur' %}📄 کیٹلاگ{% else %}📄 Catalog{% endif %}</a>
             <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
         </div>
         <h3>{% if current_lang == 'ur' %}🔍 کلاس، تاریخ اور پیریڈ منتخب کریں{% else %}🔍 Class, Date and Period Selection{% endif %}</h3>
         
+        <!-- ⚡ FIXED AUTO-LOAD LISTENER: Trigger forms submit on fields changes events -->
         <form id="attendance-setup-form" method="GET" action="/teacher/dashboard" class="setup-form">
             <select name="program" onchange="document.getElementById('attendance-setup-form').submit()" required>
                 <option value="">{% if current_lang == 'ur' %}-- پروگرام منتخب کریں --{% else %}-- Select Program --{% endif %}</option>
@@ -232,7 +226,7 @@
                         {% endif %}
                     </td>
                     <td>
-                        <!-- ⚡ UPDATED: 4 Action Buttons Rendered Side-by-Side (Present, Absent, Leave, Vacation) -->
+                        <!-- ⚡ UPDATED 4 ACTION STATE INTERFACE SELECTORS MATRIX BUTTONS -->
                         <div class="action-container">
                             <button type="button" class="btn-action-p" onclick="markInstantAttendance('{{ student.roll_no }}', 'Present')">{% if current_lang == 'ur' %}حاضر{% else %}Present{% endif %}</button>
                             <button type="button" class="btn-action-a" onclick="markInstantAttendance('{{ student.roll_no }}', 'Absent')">{% if current_lang == 'ur' %}غیر حاضر{% else %}Absent{% endif %}</button>
@@ -251,5 +245,12 @@
     </div>
     {% endif %}
 
+<script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js');
+        });
+    }
+</script>
 </body>
 </html>
