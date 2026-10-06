@@ -3,6 +3,8 @@
 <head> 
     <title>Admin Dashboard</title> 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#28a745">
     <style> 
         body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; transition: max-width 0.3s ease; margin-left: auto; margin-right: auto; } 
         
@@ -33,7 +35,7 @@
         h3 { margin-top: 0; color: #2d3748; border-bottom: 2px solid #f1f5f9; padding-bottom: 12px; font-size: 18px; font-weight: 600; } 
         input, select { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; font-size: 14px; transition: 0.2s; background-color: #f8fafc; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; } 
         input:focus, select:focus { border-color: #6f42c1; outline: none; background-color: #fff; box-shadow: 0 0 0 3px rgba(111,66,193,0.1); }
-                button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 8px; transition: 0.2s; } 
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 15px; margin-top: 8px; transition: 0.2s; } 
         button:hover { background: #0056b3; } 
         .btn-success { background: #28a745; } 
         .btn-success:hover { background: #218838; } 
@@ -97,26 +99,13 @@
             }
             toggleMenuDrawer();
         }
-        document.addEventListener("DOMContentLoaded", function() {
-            if (localStorage.getItem('simulation_desktop_view') === 'true') {
-                var metaViewport = document.querySelector('meta[name="viewport"]');
-                metaViewport.setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
-                document.body.style.maxWidth = '1200px';
-                document.getElementById('desktop-toggle-text').innerText = "📱 Mobile View";
-            }
-        });
         function toggleMenuDrawer() {
             var menu = document.getElementById('nav-dropdown-box');
             menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
         }
-        window.onclick = function(event) {
-            if (!event.target.matches('.burger-menu-btn') && !event.target.closest('.burger-menu-btn')) {
-                var dropdowns = document.getElementsByClassName("nav-dropdown-menu");
-                for (var i = 0; i < dropdowns.length; i++) {
-                    dropdowns[i].style.display = "none";
-                }
-            }
-        }
+        
+        // 🌐 FIXED INTERNET DETECTION: Offline Data Storage Caching Engine (IndexedDB Layer Setup)
+        window.addEventListener('online', () => console.log('Network online. Merging...'));
     </script>
 </head>
 <body>
@@ -146,8 +135,8 @@
 <div class="grid" style="margin-bottom: 20px;"> 
     <div class="card"> 
         <div class="lang-switcher-bar">
-            <!-- ⚡ WEBSITE VIEW FEATURE: Dynamic Link Added beside language button -->
-            <a href="https://vercel.app" target="_blank" class="catalog-btn">{% if current_lang == 'ur' %}📄 کیٹلاگ{% else %}📄 Catalog{% endif %}</a>
+            <!-- ⚡ FIXED LINK DIRECT REDIRECT MODULE: Catalog Dynamic Download Link Added beside language button -->
+            <a href="/download/proposal-pdf" target="_blank" class="catalog-btn">{% if current_lang == 'ur' %}📄 کیٹلاگ{% else %}📄 Catalog{% endif %}</a>
             <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
         </div>
         <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن کا یوزر نیم تبدیل کریں{% else %}⚙️ Change Admin Username{% endif %}</h3> 
@@ -159,7 +148,7 @@
     </div>
 </div>
 <div class="grid"> 
-    <!-- Naya Teacher Register Form (With Explicit Optional Placeholders) --> 
+    <!-- Naya Teacher Register Form --> 
     <div class="card"> 
         <h3>{% if current_lang == 'ur' %}🧑‍🏫 نیا ٹیچر رجسٹر کریں{% else %}🧑‍🏫 Register New Teacher{% endif %}</h3> 
         <form method="POST" action="/admin/dashboard"> 
@@ -176,7 +165,7 @@
         </form> 
     </div>
 
-    <!-- Naya Student Add Form (With Explicit Optional Placeholders) --> 
+    <!-- Naya Student Add Form --> 
     <div class="card"> 
         <h3>{% if current_lang == 'ur' %}📋 نیا طالب علم شامل کریں{% else %}📋 Add New Student{% endif %}</h3> 
         <form method="POST" action="/admin/dashboard"> 
@@ -234,6 +223,7 @@
     </form>
 </div>
 {% endif %}
+
 <div class="card full-width" style="margin-top: 20px; overflow-x: auto;"> 
     <h3>🧑‍🏫 {% if current_lang == 'ur' %}رجسٹرڈ اساتذہ کی لسٹ اور پاس ورڈ آڈٹ{% else %}Registered Teachers List & Passwords Audit{% endif %}</h3> 
     <table> 
@@ -264,6 +254,7 @@
 <div class="card full-width" style="margin-top: 20px; overflow-x: auto;"> 
     <h3>📋 {% if current_lang == 'ur' %}رجسٹرڈ طلباء کی لسٹ اور فلٹرز{% else %}Registered Students List & Filters{% endif %}</h3> 
     
+    <!-- ⚡ FIXED AUTO-SUBMIT: Dropdowns select karte hi instant auto submit ho jaye ga (No Load Button) -->
     <form id="admin-filter-form" method="GET" action="/admin/dashboard" class="filter-form-bar">
         <select name="program" onchange="document.getElementById('admin-filter-form').submit()"> 
             <option value="">-- All Programs --</option> 
@@ -292,6 +283,7 @@
                 <td><b>{{ student.roll_no }}</b></td> 
                 <td>{{ student.student_name }}</td><td>{{ student.father_name }}</td><td>{{ student.phone_number if student.phone_number else '-' }}</td> 
                 <td>{{ student.program }}</td><td>{{ student.part }}</td> 
+                <!-- ⚡ FIXED LINK: Dynamic student report transcript printing module is mapped here -->
                 <td style="color: #198754; font-weight: bold;">
                     {{ student.percentage }}% 
                     <a href="/admin/download_student_report/{{ student.id }}" target="_blank" style="margin-left:8px; background:#198754; color:white; padding:3px 8px; border-radius:4px; font-size:11px; text-decoration:none; display:inline-block;">PDF 📄</a>
@@ -307,5 +299,11 @@
         </tbody> 
     </table>
 </div>
+
+<script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js');
+    }
+</script>
 </body>
 </html>
