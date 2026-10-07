@@ -244,13 +244,14 @@
         {% if current_lang == 'ur' %}⚠️ اس کلاس میں کوئی طالب علم موجود نہیں ہے!{% else %}⚠️ No student found in this class!{% endif %}
     </div>
     {% endif %}
-
 <script>
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js');
-        });
-    }
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('Service Worker Registered!', reg))
+        .catch(err => console.log('Service Worker Failed!', err));
+    });
+  }
 </script>
 </body>
 </html>
