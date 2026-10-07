@@ -1,12 +1,90 @@
+import os
+import sqlite3
+from urllib.parse import urlparse
 from flask import Flask, render_template, request, redirect, url_for, session, send_file
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime
 import io
 
+
+class SQLiteCursorProxy:
+    def __init__(self, connection, cursor):
+        self._connection = connection
+        self._cursor = cursor
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    def __setattr__(self, name, value):
+        if name in {'_connection', '_cursor'}:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._cursor, name, value)
+
+    def execute(self, query, params=()):
+        if params:
+            query = query.replace('%s', '?')
+        return self._cursor.execute(query, params)
+
+    def executemany(self, query, seq_of_params):
+        if seq_of_params:
+            query = query.replace('%s', '?')
+        return self._cursor.executemany(query, seq_of_params)
+
+
+class SQLiteCompatConnection:
+    def __init__(self, db_path):
+        self._connection = sqlite3.connect(db_path)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def __setattr__(self, name, value):
+        if name == '_connection':
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._connection, name, value)
+
+    def cursor(self):
+        return SQLiteCursorProxy(self, self._connection.cursor())
+
+    def execute(self, query, params=()):
+        return self.cursor().execute(query, params)
+
+    def executemany(self, query, seq_of_params):
+        return self.cursor().executemany(query, seq_of_params)
+
+    def close(self):
+        return self._connection.close()
+
+    def commit(self):
+        return self._connection.commit()
+
+    def rollback(self):
+        return self._connection.rollback()
+
 app = Flask(__name__)
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
-app.secret_key = "attendance_cukur_secret_key_123"
+app.secret_key = os.environ.get("SECRET_KEY", "attendance_cukur_secret_key_123")
+
+
+def get_database_url():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        database_url = "sqlite:///college_attendance_app.db"
+        os.environ["DATABASE_URL"] = database_url
+    return database_url
+
+def get_local_db_path():
+    database_url = get_database_url()
+    if not database_url.startswith("sqlite"):
+        return None
+    parsed = urlparse(database_url)
+    db_name = parsed.path.lstrip("/") or "college_attendance_app.db"
+    if not os.path.isabs(db_name):
+        db_name = os.path.join(os.path.dirname(__file__), db_name)
+    return db_name
 
 @app.route('/sw.js')
 def serve_sw():
@@ -16,11 +94,32 @@ def serve_sw():
 def serve_manifest():
     return send_file('manifest.json', mimetype='application/manifest+json')
 
-# 🌍 Neon.tech Database Connection Function
+def initialize_local_database():
+    if not get_database_url().startswith('sqlite'):
+        return
+    db_path = get_local_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
+    conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, college_id INTEGER, UNIQUE(teacher_id, college_id))")
+    conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, college_id INTEGER, UNIQUE(roll_no, college_id))")
+    conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, college_id INTEGER)")
+    conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ('Punjab College', 'admin1', 'pc123', 8))
+    conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ('Superior College', 'admin2', 'sc123', 5))
+    conn.commit()
+    conn.close()
+
+
 def get_db_connection():
-    DATABASE_URL = "postgresql://neondb_owner:npg_M7bJcCfdkN3e@ep-dry-cherry-b5iifiwq-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-    conn = psycopg2.connect(DATABASE_URL)
+    database_url = get_database_url()
+    if database_url.startswith('sqlite'):
+        conn = SQLiteCompatConnection(get_local_db_path())
+        conn.row_factory = sqlite3.Row
+        return conn
+    conn = psycopg2.connect(database_url)
     return conn
+
+initialize_local_database()
+
 # 🌐 Global Multi-Language System Core Engine Matrix
 LANG_DICT = {
     'en': {
@@ -124,7 +223,7 @@ def login(role):
         username = request.form['username']
         password = request.form['password']
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=DictCursor)
+        cursor = conn.cursor()
         
         if role == 'admin':
             cursor.execute('SELECT * FROM admins WHERE username = %s AND password = %s', (username, password))
@@ -194,7 +293,7 @@ def admin_dashboard():
     selected_part = request.args.get('part', '')
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=DictCursor)
+    cursor = conn.cursor()
     
     if request.method == 'POST':
         action = request.form.get('action')
@@ -280,7 +379,7 @@ def admin_dashboard():
 def developer_dashboard():
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=DictCursor)
+    cursor = conn.cursor()
     
     if request.method == 'POST':
         action = request.form.get('action')
@@ -466,7 +565,7 @@ def teacher_dashboard():
     students = []
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=DictCursor)
+    cursor = conn.cursor()
     cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
     col_info = cursor.fetchone()
     total_periods = col_info['total_periods'] if col_info else 6
@@ -498,7 +597,7 @@ def quick_attendance():
     college_id = session.get('college_id')
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=DictCursor)
+    cursor = conn.cursor()
     cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', (roll, att_date, period_no, college_id))
     existing = cursor.fetchone()
     
@@ -523,7 +622,7 @@ def download_student_report(student_id):
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
     college_id = session.get('user_id')
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=DictCursor)
+    cursor = conn.cursor()
     cursor.execute('SELECT * FROM students WHERE id = %s AND college_id = %s', (student_id, college_id))
     student = cursor.fetchone()
     if not student:
@@ -549,11 +648,9 @@ def logout():
     session.clear()
     return redirect('/')
 
-@app.route('/sw.js')
-def serve_sw():
-    return app.send_static_file('sw.js')
-
 application = app
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=7860)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
+
+

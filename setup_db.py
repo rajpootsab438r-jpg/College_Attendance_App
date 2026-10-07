@@ -1,9 +1,45 @@
+import os
+import sqlite3
 import psycopg2
 
+def get_database_url():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        database_url = "sqlite:///college_attendance_app.db"
+        os.environ["DATABASE_URL"] = database_url
+    return database_url
+
+
+def get_local_db_path():
+    database_url = get_database_url()
+    if not database_url.startswith("sqlite"):
+        return None
+    parsed = __import__("urllib.parse").parse.urlparse(database_url)
+    db_name = parsed.path.lstrip("/") or "college_attendance_app.db"
+    if not os.path.isabs(db_name):
+        db_name = os.path.join(os.path.dirname(__file__), db_name)
+    return db_name
+
 def reset_and_setup_database():
-    DATABASE_URL = "postgresql://neondb_owner:npg_M7bJcCfdkN3e@ep-dry-cherry-b5iifiwq-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-    
-    conn = psycopg2.connect(DATABASE_URL)
+    database_url = get_database_url()
+    if database_url.startswith("sqlite"):
+        db_path = get_local_db_path()
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
+        conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, college_id INTEGER, UNIQUE(teacher_id, college_id))")
+        conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, college_id INTEGER, UNIQUE(roll_no, college_id))")
+        conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, college_id INTEGER)")
+        conn.execute("DELETE FROM attendance")
+        conn.execute("DELETE FROM students")
+        conn.execute("DELETE FROM teachers")
+        conn.execute("DELETE FROM admins")
+        conn.execute("INSERT INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Punjab College", "admin1", "pc123", 8))
+        conn.execute("INSERT INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Superior College", "admin2", "sc123", 5))
+        conn.commit()
+        conn.close()
+        print("?? Fresh Local SQLite Database Ready!")
+        return
+    conn = psycopg2.connect(database_url)
     cursor = conn.cursor()
     
     print("Resetting Neon PostgreSQL database with Period-Wise architecture...")
