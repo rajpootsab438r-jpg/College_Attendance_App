@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#28a745">
+  <title>Offline | College Attendance Portal</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", Arial, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6f9; color: #24332b; }
+    main { width: min(90vw, 420px); box-sizing: border-box; padding: 32px; background: #fff; border: 1px solid #d8e2dc; border-top: 4px solid #28a745; }
+    h1 { margin: 0 0 12px; font-size: 1.4rem; }
+    p { margin: 0 0 24px; line-height: 1.5; color: #52635a; }
+    button { border: 0; padding: 11px 16px; background: #198754; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>You are offline</h1>
+    <p>Your connection is unavailable. Previously opened pages may still be available; attendance changes need an internet connection.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </main>
+</body>
+</html>

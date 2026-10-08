@@ -1,7 +1,8 @@
 import os
 import sqlite3
+import tempfile
 from urllib.parse import urlparse
-from flask import Flask, render_template, request, redirect, url_for, session, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime
@@ -65,6 +66,8 @@ class SQLiteCompatConnection:
         return self._connection.rollback()
 
 app = Flask(__name__)
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(PROJECT_DIR, "static")
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
 app.secret_key = os.environ.get("SECRET_KEY", "attendance_cukur_secret_key_123")
 
@@ -80,6 +83,8 @@ def get_local_db_path():
     database_url = get_database_url()
     if not database_url.startswith("sqlite"):
         return None
+    if os.environ.get("VERCEL") == "1":
+        return os.path.join(tempfile.gettempdir(), "college_attendance_app.db")
     parsed = urlparse(database_url)
     db_name = parsed.path.lstrip("/") or "college_attendance_app.db"
     if not os.path.isabs(db_name):
@@ -88,11 +93,15 @@ def get_local_db_path():
 
 @app.route('/sw.js')
 def serve_sw():
-    return send_file('sw.js', mimetype='application/javascript')
+    return send_from_directory(STATIC_DIR, 'sw.js', mimetype='application/javascript')
+
+@app.route('/offline.html')
+def serve_offline_page():
+    return send_from_directory(STATIC_DIR, 'offline.html', mimetype='text/html')
 
 @app.route('/manifest.json')
 def serve_manifest():
-    return send_file('manifest.json', mimetype='application/manifest+json')
+    return send_file(os.path.join(PROJECT_DIR, 'manifest.json'), mimetype='application/manifest+json')
 
 def initialize_local_database():
     if not get_database_url().startswith('sqlite'):
@@ -213,6 +222,13 @@ def welcome():
                 <div style="margin-top: 15px; font-size: 13px; color: #555; font-weight: 500;"> {t['support']}: 03426600749</div>
                 <div style="margin-top: 10px; font-size: 14px; color: #28a745; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
             </div>
+            <script>
+                if ('serviceWorker' in navigator) {{
+                    window.addEventListener('load', () => {{
+                        navigator.serviceWorker.register('/sw.js').catch(() => {{}});
+                    }});
+                }}
+            </script>
         </body>
     </html>
     """
