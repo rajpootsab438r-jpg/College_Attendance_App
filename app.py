@@ -139,7 +139,7 @@ LANG_DICT = {
         'dev_btn': 'Super Developer Portal',
         'support': 'Support/WhatsApp',
         'lang_toggle': 'اردو 🇵🇰',
-        'download_catalog': '📄 Catalog'
+        'download_app': '📥 Download App'
     },
     'ur': {
         'title': 'کالج اٹینڈنس پورٹل',
@@ -149,7 +149,7 @@ LANG_DICT = {
         'dev_btn': 'سپر ڈیولپر پورٹل',
         'support': 'سپورٹ / واٹس ایپ',
         'lang_toggle': 'English 🇬🇧',
-        'download_catalog': '📄 کیٹلاگ'
+        'download_app': '📥 Download App'
     }
 }
 # 🔄 Global Language Router Handler Gateway
@@ -209,8 +209,7 @@ def welcome():
         </head>
         <body>
             <div class="lang-switcher-bar">
-                <!-- ⚡ FIXED CATALOG DOWNLOAD DIRECT ROUTE LINK: Direct mapping to dynamic internal builder endpoint -->
-                <a href="/download/proposal-pdf" target="_blank" class="catalog-btn">{t['download_catalog']}</a>
+                <a href="/static/app-release-signed.apk" class="catalog-btn" download>{t['download_app']}</a>
                 <a href="/set_language/{next_lang}" class="lang-btn">{t['lang_toggle']}</a>
             </div>
             <div class="container">

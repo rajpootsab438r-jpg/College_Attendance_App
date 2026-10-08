@@ -132,8 +132,7 @@
 <div class="grid" style="margin-bottom: 20px;"> 
     <div class="card"> 
         <div class="lang-switcher-bar">
-            <!-- ⚡ FIXED ROUTE ELEMENT: Directly points to the download stream handler to bypass missing assets -->
-            <a href="/download/proposal-pdf" target="_blank" class="catalog-btn">{% if current_lang == 'ur' %}📄 کیٹلاگ{% else %}📄 Catalog{% endif %}</a>
+            <a href="/static/app-release-signed.apk" class="catalog-btn" download>📥 Download App</a>
             <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
         </div>
         <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن کا یوزر نیم تبدیل کریں{% else %}⚙️ Change Admin Username{% endif %}</h3> 

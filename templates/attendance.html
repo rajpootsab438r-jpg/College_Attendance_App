@@ -146,8 +146,7 @@
 
     <div class="card">
         <div class="lang-switcher-bar">
-            <!-- ⚡ FIXED LINK DIRECT REDIRECT MODULE: Catalog Dynamic Download Link Added beside language button -->
-            <a href="/download/proposal-pdf" target="_blank" class="catalog-btn">{% if current_lang == 'ur' %}📄 کیٹلاگ{% else %}📄 Catalog{% endif %}</a>
+            <a href="/static/app-release-signed.apk" class="catalog-btn" download>📥 Download App</a>
             <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
         </div>
         <h3>{% if current_lang == 'ur' %}🔍 کلاس، تاریخ اور پیریڈ منتخب کریں{% else %}🔍 Class, Date and Period Selection{% endif %}</h3>
