@@ -3,6 +3,18 @@
 <head> 
     <title>Admin Dashboard | Çukur</title> 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function() {
+            var savedDesktopView = localStorage.getItem('desktopView');
+            if (savedDesktopView === null) {
+                savedDesktopView = localStorage.getItem('simulation_desktop_view') === 'true' ? 'true' : 'false';
+                localStorage.setItem('desktopView', savedDesktopView);
+            }
+            if (savedDesktopView === 'true') {
+                document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
+            }
+        })();
+    </script>
     <!-- ⚡ FIXED PWA ERROR: Mapped straight back to the manifest endpoint gateway to clear install warnings -->
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#198754">
@@ -57,8 +69,6 @@
         .view-pass-btn { background: none; border: none; color: #198754; cursor: pointer; font-size: 12px; font-weight: bold; padding: 0; margin-left: 5px; text-decoration: underline; width: auto; } 
         .password-container { position: relative; width: 100%; } 
         .toggle-eye { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; } 
-        .lang-switcher-bar { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 25px; top: 22px; display: flex; gap: 8px; }
-        .lang-btn, .catalog-btn { background: #ffffff; color: #198754; border: 1px solid #198754; padding: 5px 12px; font-weight: bold; border-radius: 15px; text-decoration: none; font-size: 11px; display: inline-flex; align-items: center; }
     </style> 
     <script> 
         function togglePassword(id) { 
@@ -83,22 +93,24 @@
                 icon.innerText = "👁️"; 
             } 
         } 
-        function toggleDesktopView() {
+        function applyDesktopView(isDesktop) {
             var metaViewport = document.querySelector('meta[name="viewport"]');
-            var isDesktop = localStorage.getItem('simulation_desktop_view') === 'true';
-            if (!isDesktop) {
-                metaViewport.setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
-                document.body.style.maxWidth = '1200px';
-                localStorage.setItem('simulation_desktop_view', 'true');
-                document.getElementById('desktop-toggle-text').innerText = "📱 Mobile View";
-            } else {
-                metaViewport.setAttribute('content', 'width=device-width, initial-scale=1.0');
-                document.body.style.maxWidth = '100%';
-                localStorage.setItem('simulation_desktop_view', 'false');
-                document.getElementById('desktop-toggle-text').innerText = "🖥️ Desktop View";
-            }
+            var toggleText = document.getElementById('desktop-toggle-text');
+            metaViewport.setAttribute('content', isDesktop
+                ? 'width=1200, initial-scale=0.3, shrink-to-fit=no'
+                : 'width=device-width, initial-scale=1.0');
+            document.body.style.maxWidth = isDesktop ? '1200px' : '100%';
+            toggleText.innerText = isDesktop ? "📱 Mobile View" : "🖥️ Desktop View";
+        }
+        function toggleDesktopView() {
+            var isDesktop = localStorage.getItem('desktopView') !== 'true';
+            localStorage.setItem('desktopView', String(isDesktop));
+            applyDesktopView(isDesktop);
             toggleMenuDrawer();
         }
+        document.addEventListener('DOMContentLoaded', function() {
+            applyDesktopView(localStorage.getItem('desktopView') === 'true');
+        });
         function toggleMenuDrawer() {
             var menu = document.getElementById('nav-dropdown-box');
             menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
@@ -131,10 +143,6 @@
 
 <div class="grid" style="margin-bottom: 20px;"> 
     <div class="card"> 
-        <div class="lang-switcher-bar">
-            <a href="/static/app-release-signed.apk" class="catalog-btn" download>📥 Download App</a>
-            <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
-        </div>
         <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن کا یوزر نیم تبدیل کریں{% else %}⚙️ Change Admin Username{% endif %}</h3> 
         <form method="POST" action="/admin/dashboard"> 
             <input type="hidden" name="action" value="change_username"> 

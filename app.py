@@ -95,6 +95,7 @@ def get_local_db_path():
 def serve_sw():
     return send_from_directory(STATIC_DIR, 'sw.js', mimetype='application/javascript')
 
+@app.route('/offline')
 @app.route('/offline.html')
 def serve_offline_page():
     return send_from_directory(STATIC_DIR, 'offline.html', mimetype='text/html')
@@ -667,5 +668,4 @@ application = app
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
-
 

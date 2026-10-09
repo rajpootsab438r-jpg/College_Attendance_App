@@ -1,8 +1,8 @@
-const CACHE_NAME = 'college-attendance-v1';
-const OFFLINE_URL = '/offline.html';
+const CACHE_NAME = 'college-attendance-v2';
+const OFFLINE_URL = '/offline';
 const APP_SHELL = [
   '/',
-  '/offline.html',
+  OFFLINE_URL,
   '/manifest.json',
   '/login/admin',
   '/login/teacher',
@@ -13,9 +13,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      await Promise.allSettled(
-        APP_SHELL.map((url) => cache.add(url))
-      );
+      await cache.add(OFFLINE_URL);
+      await Promise.allSettled(APP_SHELL
+        .filter((url) => url !== OFFLINE_URL)
+        .map((url) => cache.add(url)));
     })()
   );
   self.skipWaiting();
@@ -50,10 +51,15 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       } catch {
-        const cachedPage = await caches.match(request)
-          || await caches.match('/')
-          || await caches.match(OFFLINE_URL);
-        return cachedPage || caches.match(OFFLINE_URL);
+        const cachedPage = await caches.match(request);
+        if (cachedPage) {
+          return cachedPage;
+        }
+        const offlinePage = await caches.match(OFFLINE_URL);
+        return offlinePage || new Response('Offline page is not available.', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        });
       }
     })());
     return;
@@ -73,7 +79,10 @@ self.addEventListener('fetch', (event) => {
       }
       return response;
     } catch {
-      return caches.match(OFFLINE_URL);
+      return new Response('Offline resource is not cached.', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
     }
   })());
 });

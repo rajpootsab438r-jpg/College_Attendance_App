@@ -11,14 +11,19 @@
     main { width: min(90vw, 420px); box-sizing: border-box; padding: 32px; background: #fff; border: 1px solid #d8e2dc; border-top: 4px solid #28a745; }
     h1 { margin: 0 0 12px; font-size: 1.4rem; }
     p { margin: 0 0 24px; line-height: 1.5; color: #52635a; }
-    button { border: 0; padding: 11px 16px; background: #198754; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .actions a, .actions button { border: 0; padding: 11px 16px; background: #198754; color: #fff; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .actions a { background: #eef6f0; color: #146c43; }
   </style>
 </head>
 <body>
   <main>
     <h1>You are offline</h1>
-    <p>Your connection is unavailable. Previously opened pages may still be available; attendance changes need an internet connection.</p>
-    <button type="button" onclick="location.reload()">Try again</button>
+    <p>Your connection is unavailable. Previously cached pages may still be available, but attendance changes need an internet connection.</p>
+    <div class="actions">
+      <a href="/">Open cached portal</a>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </div>
   </main>
 </body>
 </html>

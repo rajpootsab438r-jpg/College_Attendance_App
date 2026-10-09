@@ -3,6 +3,18 @@
 <head>
     <title>Teacher Attendance Portal | Çukur</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function() {
+            var savedDesktopView = localStorage.getItem('desktopView');
+            if (savedDesktopView === null) {
+                savedDesktopView = localStorage.getItem('simulation_desktop_view_teacher') === 'true' ? 'true' : 'false';
+                localStorage.setItem('desktopView', savedDesktopView);
+            }
+            if (savedDesktopView === 'true') {
+                document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
+            }
+        })();
+    </script>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#28a745">
     <style>
@@ -55,9 +67,6 @@
         .btn-action-l { background-color: #ffc107; color: #212529; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
         .btn-action-v { background-color: #6f42c1; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
         
-        .lang-switcher-bar { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 20px; top: 20px; display: flex; gap: 8px; }
-        .lang-btn, .catalog-btn { background: #f1f5f9; color: #28a745; border: 1px solid #28a745; padding: 5px 12px; font-weight: bold; border-radius: 15px; text-decoration: none; font-size: 11px; display: inline-flex; align-items: center; }
-        .catalog-btn { color: #198754; border-color: #198754; }
     </style>
     <script>
         function markInstantAttendance(studentRoll, targetStatus) {
@@ -89,29 +98,24 @@
         }
 
         function toggleDesktopView() {
-            var metaViewport = document.querySelector('meta[name="viewport"]');
-            var isDesktop = localStorage.getItem('simulation_desktop_view_teacher') === 'true';
-            if (!isDesktop) {
-                metaViewport.setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
-                document.body.style.maxWidth = '1200px';
-                localStorage.setItem('simulation_desktop_view_teacher', 'true');
-                document.getElementById('desktop-toggle-text').innerText = "📱 Mobile View";
-            } else {
-                metaViewport.setAttribute('content', 'width=device-width, initial-scale=1.0');
-                document.body.style.maxWidth = '100%';
-                localStorage.setItem('simulation_desktop_view_teacher', 'false');
-                document.getElementById('desktop-toggle-text').innerText = "🖥️ Desktop View";
-            }
+            var isDesktop = localStorage.getItem('desktopView') !== 'true';
+            localStorage.setItem('desktopView', String(isDesktop));
+            applyDesktopView(isDesktop);
             toggleMenuDrawer();
         }
 
+        function applyDesktopView(isDesktop) {
+            var metaViewport = document.querySelector('meta[name="viewport"]');
+            var toggleText = document.getElementById('desktop-toggle-text');
+            metaViewport.setAttribute('content', isDesktop
+                ? 'width=1200, initial-scale=0.3, shrink-to-fit=no'
+                : 'width=device-width, initial-scale=1.0');
+            document.body.style.maxWidth = isDesktop ? '1200px' : '100%';
+            toggleText.innerText = isDesktop ? "📱 Mobile View" : "🖥️ Desktop View";
+        }
+
         document.addEventListener("DOMContentLoaded", function() {
-            if (localStorage.getItem('simulation_desktop_view_teacher') === 'true') {
-                var metaViewport = document.querySelector('meta[name="viewport"]');
-                metaViewport.setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
-                document.body.style.maxWidth = '1200px';
-                document.getElementById('desktop-toggle-text').innerText = "📱 Mobile View";
-            }
+            applyDesktopView(localStorage.getItem('desktopView') === 'true');
         });
 
         function toggleMenuDrawer() {
@@ -145,10 +149,6 @@
     </div>
 
     <div class="card">
-        <div class="lang-switcher-bar">
-            <a href="/static/app-release-signed.apk" class="catalog-btn" download>📥 Download App</a>
-            <a href="/set_language/{% if current_lang == 'en' %}ur{% else %}en{% endif %}" class="lang-btn">{% if current_lang == 'en' %}اردو 🇵🇰{% else %}English 🇬🇧{% endif %}</a>
-        </div>
         <h3>{% if current_lang == 'ur' %}🔍 کلاس، تاریخ اور پیریڈ منتخب کریں{% else %}🔍 Class, Date and Period Selection{% endif %}</h3>
         
         <!-- ⚡ FIXED AUTO-LOAD LISTENER: Trigger forms submit on fields changes events -->
