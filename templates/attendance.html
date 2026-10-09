@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>
         (function() {
-            var desktopMode = localStorage.getItem('desktopMode');
-            if (desktopMode === null) {
-                desktopMode = localStorage.getItem('desktopView');
-                if (desktopMode === null) {
-                    desktopMode = localStorage.getItem('simulation_desktop_view_teacher');
+            var desktopView = localStorage.getItem('desktopView');
+            if (desktopView === null) {
+                desktopView = localStorage.getItem('desktopMode');
+                if (desktopView === null) {
+                    desktopView = localStorage.getItem('simulation_desktop_view_teacher');
                 }
-                desktopMode = desktopMode === 'true' ? 'true' : 'false';
-                localStorage.setItem('desktopMode', desktopMode);
+                desktopView = desktopView === 'true' ? 'true' : 'false';
+                localStorage.setItem('desktopView', desktopView);
             }
-            if (desktopMode === 'true') {
+            if (desktopView === 'true') {
                 document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=1200, initial-scale=0.3, shrink-to-fit=no');
             }
         })();
@@ -102,8 +102,8 @@
         }
 
         function toggleDesktopView() {
-            var isDesktop = localStorage.getItem('desktopMode') !== 'true';
-            localStorage.setItem('desktopMode', String(isDesktop));
+            var isDesktop = localStorage.getItem('desktopView') !== 'true';
+            localStorage.setItem('desktopView', String(isDesktop));
             applyDesktopView(isDesktop);
             toggleMenuDrawer();
         }
@@ -119,7 +119,7 @@
         }
 
         document.addEventListener("DOMContentLoaded", function() {
-            applyDesktopView(localStorage.getItem('desktopMode') === 'true');
+            applyDesktopView(localStorage.getItem('desktopView') === 'true');
         });
 
         function toggleMenuDrawer() {
