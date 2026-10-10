@@ -1,6 +1,6 @@
 {
   "name": "Cukur Attendance Management Portal",
-  "short_name": "Cukur System",
+  "short_name": "CAS",
   "description": "Offline-ready college attendance and student management portal.",
   "start_url": "/",
   "id": "/",
