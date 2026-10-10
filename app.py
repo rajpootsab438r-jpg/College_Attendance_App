@@ -138,7 +138,7 @@ def serve_manifest():
         mimetype='application/manifest+json',
         max_age=0
     )
-    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return response
 
 
