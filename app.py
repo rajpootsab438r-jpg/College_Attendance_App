@@ -132,11 +132,9 @@ def serve_offline_page():
 
 @app.route('/manifest.json')
 def serve_manifest():
-    manifest_path = os.path.join(PROJECT_DIR, 'manifest.json')
-    if not os.path.isfile(manifest_path):
-        manifest_path = os.path.join(STATIC_DIR, 'manifest.json')
-    response = send_file(
-        manifest_path,
+    response = send_from_directory(
+        PROJECT_DIR,
+        'manifest.json',
         mimetype='application/manifest+json',
         max_age=0
     )
@@ -655,6 +653,10 @@ def developer_dashboard():
                 input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; }
                 button { width: 100%; padding: 10px; background: #198754; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 5px; }
                 button:hover { background: #146c43; }
+                .form-toggle { width: auto; padding: 9px 14px; }
+                .form-panel[hidden] { display: none; }
+                .form-panel { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.2s ease; }
+                .form-panel.is-open { max-height: 700px; opacity: 1; }
                 table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; border-radius: 8px; overflow: hidden; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); }
                 th { background-color: #d1e7dd !important; color: #0f5132 !important; font-weight: bold; border: 1px solid #a3cfbb; padding: 12px; text-align: left; }
                 tr:nth-child(even) { background-color: #f8fafc; }
@@ -671,14 +673,17 @@ def developer_dashboard():
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>
-                    <form method="POST" action="/developer/create_college">
-                        <input type="hidden" name="action" value="create_new_college">
-                        <input type="text" name="college_name" placeholder="College Name (e.g. Punjab College)" required>
-                        <input type="text" name="username" placeholder="Admin Username" required>
-                        <input type="text" name="password" placeholder="Admin Password" required>
-                        <input type="number" name="total_periods" placeholder="Total Periods Config" value="6" required>
-                        <button type="submit">Create Account</button>
-                    </form>
+                    <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="add-college-form" data-open-label="+ Add College" data-close-label="− Cancel">+ Add College</button>
+                    <div id="add-college-form" class="form-panel" hidden>
+                        <form method="POST" action="/developer/create_college">
+                            <input type="hidden" name="action" value="create_new_college">
+                            <input type="text" name="college_name" placeholder="College Name (e.g. Punjab College)" required>
+                            <input type="text" name="username" placeholder="Admin Username" required>
+                            <input type="text" name="password" placeholder="Admin Password" required>
+                            <input type="number" name="total_periods" placeholder="Total Periods Config" value="6" required>
+                            <button type="submit">Create Account</button>
+                        </form>
+                    </div>
                 </div>
                 <div class="card">
                     <h3>📋 Registered Accounts Matrix</h3>
@@ -716,6 +721,24 @@ def developer_dashboard():
             </div>
             <script src="/static/offline-sync.js"></script>
             <script>
+                document.querySelectorAll('[data-form-toggle]').forEach(button => {
+                    const panel = document.getElementById(button.getAttribute('aria-controls'));
+                    if (!panel) return;
+                    button.addEventListener('click', () => {
+                        const opening = button.getAttribute('aria-expanded') !== 'true';
+                        button.setAttribute('aria-expanded', String(opening));
+                        button.textContent = opening ? button.dataset.closeLabel : button.dataset.openLabel;
+                        if (opening) {
+                            panel.hidden = false;
+                            requestAnimationFrame(() => panel.classList.add('is-open'));
+                        } else {
+                            panel.classList.remove('is-open');
+                        }
+                    });
+                    panel.addEventListener('transitionend', () => {
+                        if (button.getAttribute('aria-expanded') === 'false') panel.hidden = true;
+                    });
+                });
                 if ('serviceWorker' in navigator) {
                     navigator.serviceWorker.register('/sw.js', {scope: '/'})
                         .catch(error => console.error('Service worker registration failed:', error));

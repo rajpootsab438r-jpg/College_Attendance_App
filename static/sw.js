@@ -45,6 +45,7 @@ self.addEventListener('activate', (event) => {
       .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
       .map((name) => caches.delete(name)));
     await self.clients.claim();
+    await registerBackgroundSync();
   })());
 });
 

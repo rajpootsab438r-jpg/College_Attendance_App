@@ -73,6 +73,10 @@
         .view-pass-btn { background: none; border: none; color: #198754; cursor: pointer; font-size: 12px; font-weight: bold; padding: 0; margin-left: 5px; text-decoration: underline; width: auto; } 
         .password-container { position: relative; width: 100%; } 
         .toggle-eye { position: absolute; {% if current_lang == 'ur' %}left{% else %}right{% endif %}: 12px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; } 
+        .form-toggle { width: auto; margin: 0; padding: 9px 14px; }
+        .form-panel[hidden] { display: none; }
+        .form-panel { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.2s ease; }
+        .form-panel.is-open { max-height: 1400px; opacity: 1; }
     </style> 
     <script> 
         function togglePassword(id) { 
@@ -114,6 +118,24 @@
         }
         document.addEventListener('DOMContentLoaded', function() {
             applyDesktopView(localStorage.getItem('desktopView') === 'true');
+            document.querySelectorAll('[data-form-toggle]').forEach(function(button) {
+                var panel = document.getElementById(button.getAttribute('aria-controls'));
+                if (!panel) return;
+                button.addEventListener('click', function() {
+                    var opening = button.getAttribute('aria-expanded') !== 'true';
+                    button.setAttribute('aria-expanded', String(opening));
+                    button.textContent = opening ? button.dataset.closeLabel : button.dataset.openLabel;
+                    if (opening) {
+                        panel.hidden = false;
+                        requestAnimationFrame(function() { panel.classList.add('is-open'); });
+                    } else {
+                        panel.classList.remove('is-open');
+                    }
+                });
+                panel.addEventListener('transitionend', function() {
+                    if (button.getAttribute('aria-expanded') === 'false') panel.hidden = true;
+                });
+            });
         });
         function toggleMenuDrawer() {
             var menu = document.getElementById('nav-dropdown-box');
@@ -159,62 +181,71 @@
     <!-- Naya Teacher Register Form --> 
     <div class="card"> 
         <h3>{% if current_lang == 'ur' %}🧑‍🏫 نیا ٹیچر رجسٹر کریں{% else %}🧑‍🏫 Register New Teacher{% endif %}</h3> 
-        <form method="POST" action="/admin/dashboard"> 
-            <input type="hidden" name="action" value="add_teacher"> 
-            <input type="text" name="teacher_id" placeholder="{% if current_lang == 'ur' %}ٹیچر آئی ڈی (اختیاری){% else %}Teacher ID (Optional){% endif %}" autocomplete="off"> 
-            <input type="text" name="name" placeholder="{% if current_lang == 'ur' %}ٹیچر کا نام{% else %}Teacher Name{% endif %}" autocomplete="off" required> 
-            <input type="text" name="username" placeholder="{% if current_lang == 'ur' %}لاگ ان یوزر نیم{% else %}Login Username{% endif %}" autocomplete="off" required> 
-            <div class="password-container"> 
-                <input type="password" id="add_teacher_password" name="password" placeholder="{% if current_lang == 'ur' %}لاگ ان پاس ورڈ{% else %}Login Password{% endif %}" autocomplete="off" required> 
-                <span id="eye-icon-add_teacher_password" class="toggle-eye" onclick="toggleInputPassword('add_teacher_password')">👁️</span> 
-            </div> 
-            <input type="text" name="subject" placeholder="{% if current_lang == 'ur' %}مختص کردہ مضمون / کتاب (اختیاری){% else %}Assigned Subject / Book (Optional){% endif %}" autocomplete="off"> 
-            <button type="submit">{% if current_lang == 'ur' %}ٹیچر شامل کریں{% else %}Add Teacher{% endif %}</button> 
-        </form> 
+        <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="add-teacher-form" data-open-label="{% if current_lang == 'ur' %}+ ٹیچر شامل کریں{% else %}+ Add Teacher{% endif %}" data-close-label="{% if current_lang == 'ur' %}− منسوخ کریں{% else %}− Cancel{% endif %}">{% if current_lang == 'ur' %}+ ٹیچر شامل کریں{% else %}+ Add Teacher{% endif %}</button>
+        <div id="add-teacher-form" class="form-panel" hidden>
+            <form method="POST" action="/admin/dashboard">
+                <input type="hidden" name="action" value="add_teacher">
+                <input type="text" name="teacher_id" placeholder="{% if current_lang == 'ur' %}ٹیچر آئی ڈی (اختیاری){% else %}Teacher ID (Optional){% endif %}" autocomplete="off">
+                <input type="text" name="name" placeholder="{% if current_lang == 'ur' %}ٹیچر کا نام{% else %}Teacher Name{% endif %}" autocomplete="off" required>
+                <input type="text" name="username" placeholder="{% if current_lang == 'ur' %}لاگ ان یوزر نیم{% else %}Login Username{% endif %}" autocomplete="off" required>
+                <div class="password-container">
+                    <input type="password" id="add_teacher_password" name="password" placeholder="{% if current_lang == 'ur' %}لاگ ان پاس ورڈ{% else %}Login Password{% endif %}" autocomplete="off" required>
+                    <span id="eye-icon-add_teacher_password" class="toggle-eye" onclick="toggleInputPassword('add_teacher_password')">👁️</span>
+                </div>
+                <input type="text" name="subject" placeholder="{% if current_lang == 'ur' %}مختص کردہ مضمون / کتاب (اختیاری){% else %}Assigned Subject / Book (Optional){% endif %}" autocomplete="off">
+                <button type="submit">{% if current_lang == 'ur' %}ٹیچر شامل کریں{% else %}Add Teacher{% endif %}</button>
+            </form>
+        </div>
     </div>
 
     <!-- Naya Student Add Form --> 
     <div class="card"> 
         <h3>{% if current_lang == 'ur' %}📋 نیا طالب علم شامل کریں{% else %}📋 Add New Student{% endif %}</h3> 
-        <form method="POST" action="/admin/dashboard"> 
-            <input type="hidden" name="action" value="add_student"> 
-            <input type="text" name="roll_no" placeholder="{% if current_lang == 'ur' %}رول نمبر{% else %}Roll Number{% endif %}" autocomplete="off" required> 
-            <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required> 
-            <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required> 
-            <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off"> 
-            <select name="program" required> 
-                <option value="">-- Select Program --</option> 
-                <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option> 
-            </select> 
-            <select name="part" required> 
-                <option value="">-- Select Part / Semester --</option> 
-                <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option> 
-            </select> 
-            <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button> 
-        </form> 
+        <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="add-student-form" data-open-label="{% if current_lang == 'ur' %}+ طالب علم شامل کریں{% else %}+ Add Student{% endif %}" data-close-label="{% if current_lang == 'ur' %}− منسوخ کریں{% else %}− Cancel{% endif %}">{% if current_lang == 'ur' %}+ طالب علم شامل کریں{% else %}+ Add Student{% endif %}</button>
+        <div id="add-student-form" class="form-panel" hidden>
+            <form method="POST" action="/admin/dashboard">
+                <input type="hidden" name="action" value="add_student">
+                <input type="text" name="roll_no" placeholder="{% if current_lang == 'ur' %}رول نمبر{% else %}Roll Number{% endif %}" autocomplete="off" required>
+                <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required>
+                <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required>
+                <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off">
+                <select name="program" required>
+                    <option value="">-- Select Program --</option>
+                    <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option>
+                </select>
+                <select name="part" required>
+                    <option value="">-- Select Part / Semester --</option>
+                    <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option>
+                </select>
+                <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button>
+            </form>
+        </div>
     </div>
 </div>
 <div class="grid" style="margin-top: 20px;">
     <div class="card full-width">
         <h3>📷 Scan / Import Student List</h3>
-        <p>Choose or photograph a clear list. OCR runs in this browser; check and correct the recognized rows before importing.</p>
-        <label for="student-scan-image">Photo or scanned image</label>
-        <input id="student-scan-image" type="file" accept="image/*" capture="environment">
-        <div style="display:flex;gap:12px;flex-wrap:wrap;">
-            <select id="scan-program" required>
-                <option value="">-- Select Program --</option>
-                <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option>
-            </select>
-            <select id="scan-part" required>
-                <option value="">-- Select Part / Semester --</option>
-                <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option>
-            </select>
+        <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="scan-student-form" data-open-label="+ Scan / Import Students" data-close-label="− Cancel">+ Scan / Import Students</button>
+        <div id="scan-student-form" class="form-panel" hidden>
+            <p>Choose or photograph a clear list. OCR runs in this browser; check and correct the recognized rows before importing.</p>
+            <label for="student-scan-image">Photo or scanned image</label>
+            <input id="student-scan-image" type="file" accept="image/*" capture="environment">
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <select id="scan-program" required>
+                    <option value="">-- Select Program --</option>
+                    <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option>
+                </select>
+                <select id="scan-part" required>
+                    <option value="">-- Select Part / Semester --</option>
+                    <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option>
+                </select>
+            </div>
+            <button id="scan-students-button" type="button">Scan image (OCR)</button>
+            <p>Review the text below. Each row must be separated into columns with tabs, |, or at least two spaces: roll number, student name, father name, optional phone number.</p>
+            <textarea id="scan-students-text" rows="10" style="width:100%;box-sizing:border-box;padding:12px;" placeholder="Roll number | Student name | Father name | Phone (optional)"></textarea>
+            <button id="import-scanned-students" type="button" class="btn-success">Review and add students</button>
+            <p id="scan-status" role="status" aria-live="polite"></p>
         </div>
-        <button id="scan-students-button" type="button">Scan image (OCR)</button>
-        <p>Review the text below. Each row must be separated into columns with tabs, |, or at least two spaces: roll number, student name, father name, optional phone number.</p>
-        <textarea id="scan-students-text" rows="10" style="width:100%;box-sizing:border-box;padding:12px;" placeholder="Roll number | Student name | Father name | Phone (optional)"></textarea>
-        <button id="import-scanned-students" type="button" class="btn-success">Review and add students</button>
-        <p id="scan-status" role="status" aria-live="polite"></p>
     </div>
 </div>
 <!-- 📝 Dynamic Optional Fields Safe Overlay Editors Box -->
