@@ -1,4 +1,4 @@
-const CACHE_NAME = 'college-attendance-v4';
+const CACHE_NAME = 'college-attendance-v5';
 const CACHE_PREFIX = 'college-attendance-';
 const OFFLINE_URL = '/offline';
 const SYNC_TAG = 'sync-cukur-data';
@@ -192,8 +192,13 @@ function removePendingOperation(database, id) {
 }
 
 function allowedQueueUrl(value) {
-  const url = new URL(value, self.location.origin);
-  if (url.origin !== self.location.origin) {
+  let url;
+  try {
+    url = new URL(value, self.location.origin);
+  } catch (error) {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return false;
   }
   return url.pathname === '/teacher/quick_attendance' ||
@@ -226,7 +231,8 @@ async function runQueue() {
           throw new Error('An offline action has invalid routing or identity data; it was kept for review.');
         }
 
-        const response = await fetch(operation.url, {
+        const queuePath = new URL(operation.url, self.location.origin);
+        const response = await fetch(queuePath.pathname + queuePath.search, {
           method: 'POST',
           credentials: 'include',
           cache: 'no-store',

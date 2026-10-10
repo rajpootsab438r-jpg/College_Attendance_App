@@ -5,6 +5,13 @@
   const DB_VERSION = 1;
   const STORE_NAME = 'pending';
   const SYNC_TAG = 'sync-cukur-data';
+  const QUEUE_PATHS = new Set([
+    '/teacher/quick_attendance',
+    '/admin/dashboard',
+    '/admin/import_students',
+    '/developer/dashboard',
+    '/developer/create_college'
+  ]);
 
   let databasePromise;
 
@@ -31,6 +38,23 @@
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  function allowedQueueUrl(value) {
+    let url;
+    try {
+      url = new URL(value, location.origin);
+    } catch (error) {
+      return null;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+    if (QUEUE_PATHS.has(url.pathname) ||
+        /^\/developer\/delete\/(college|teacher|student)\/\d+$/.test(url.pathname)) {
+      return `${url.pathname}${url.search}`;
+    }
+    return null;
+  }
+
   async function countPending() {
     const database = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -46,10 +70,14 @@
     if (!actor) {
       throw new Error('Offline sync identity is not configured for this page.');
     }
+    const path = allowedQueueUrl(url);
+    if (!path) {
+      throw new Error('This action cannot be queued for offline synchronization.');
+    }
 
     const database = await openDatabase();
     const entry = {
-      url: new URL(url, location.origin).href,
+      url: path,
       method: 'POST',
       body,
       contentType,
@@ -87,13 +115,17 @@
     if (!actor) {
       throw new Error('Offline sync identity is not configured for this page.');
     }
+    const path = allowedQueueUrl(url);
+    if (!path) {
+      throw new Error('This action cannot be sent or queued for offline synchronization.');
+    }
     const operationId = createOperationId();
     if (!navigator.onLine) {
-      return { queued: true, id: await enqueue(url, body, contentType, tag, operationId) };
+      return { queued: true, id: await enqueue(path, body, contentType, tag, operationId) };
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await fetch(path, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -112,7 +144,7 @@
       return { queued: false, result };
     } catch (error) {
       if (!navigator.onLine || error instanceof TypeError) {
-        return { queued: true, id: await enqueue(url, body, contentType, tag, operationId) };
+        return { queued: true, id: await enqueue(path, body, contentType, tag, operationId) };
       }
       throw error;
     }
@@ -165,8 +197,8 @@
         return;
       }
 
-      const endpoint = new URL(form.action || location.href, location.href);
-      if (endpoint.origin !== location.origin) {
+      const endpointPath = allowedQueueUrl(form.action || location.href);
+      if (!endpointPath) {
         return;
       }
 
@@ -181,7 +213,7 @@
       if (button) button.disabled = true;
 
       try {
-        const result = await sendOrQueue(endpoint.href, body.toString(), 'application/x-www-form-urlencoded;charset=UTF-8', actionTag(formData, endpoint.pathname));
+        const result = await sendOrQueue(endpointPath, body.toString(), 'application/x-www-form-urlencoded;charset=UTF-8', actionTag(formData, new URL(endpointPath, location.origin).pathname));
         if (result.queued) {
           updatePendingCount('Saved on this device. It will sync automatically when the connection returns and this account is authenticated.');
           return;

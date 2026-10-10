@@ -673,7 +673,7 @@ def developer_dashboard():
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>
-                    <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="add-college-form" data-open-label="+ Add College" data-close-label="− Cancel">+ Add College</button>
+                    <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="add-college-form" data-open-label="+ Add College Account" data-close-label="− Cancel">+ Add College Account</button>
                     <div id="add-college-form" class="form-panel" hidden>
                         <form method="POST" action="/developer/create_college">
                             <input type="hidden" name="action" value="create_new_college">
