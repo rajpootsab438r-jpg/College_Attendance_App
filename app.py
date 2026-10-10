@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import threading
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
@@ -70,17 +71,45 @@ STATIC_DIR = os.path.join(PROJECT_DIR, "static")
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
 app.secret_key = os.environ.get("SECRET_KEY", "attendance_cukur_secret_key_123")
 
+class DatabaseConfigurationError(RuntimeError):
+    pass
+
+
+_database_initialized = False
+_database_initialization_lock = threading.Lock()
+
 
 def get_database_url():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         if os.environ.get("VERCEL") == "1":
-            raise RuntimeError("Set DATABASE_URL to a persistent PostgreSQL database on Vercel.")
+            raise DatabaseConfigurationError(
+                "DATABASE_URL is missing. Add your PostgreSQL connection string in "
+                "Vercel Project Settings > Environment Variables, then redeploy."
+            )
         database_url = "sqlite:///college_attendance_app.db"
         os.environ["DATABASE_URL"] = database_url
     if os.environ.get("VERCEL") == "1" and database_url.startswith("sqlite"):
-        raise RuntimeError("SQLite is not persistent on Vercel. Set DATABASE_URL to a persistent PostgreSQL database.")
+        raise DatabaseConfigurationError(
+            "SQLite storage is temporary on Vercel. Set DATABASE_URL to a persistent PostgreSQL connection string."
+        )
     return database_url
+
+
+@app.errorhandler(DatabaseConfigurationError)
+def handle_database_configuration_error(error):
+    app.logger.error("Database configuration error: %s", error)
+    return jsonify({"status": "error", "message": str(error)}), 503
+
+
+@app.errorhandler(psycopg2.OperationalError)
+def handle_database_connection_error(error):
+    app.logger.error("PostgreSQL connection failed: %s", error)
+    return jsonify({
+        "status": "error",
+        "message": "The database is temporarily unavailable. Check DATABASE_URL and the database provider's network/SSL settings."
+    }), 503
+
 
 def get_local_db_path():
     database_url = get_database_url()
@@ -134,41 +163,27 @@ def begin_sync_operation(cursor):
     return cursor.rowcount == 0
 
 
-def initialize_local_database():
-    if not get_database_url().startswith('sqlite'):
+def ensure_database_initialized():
+    global _database_initialized
+    if _database_initialized:
         return
-    db_path = get_local_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
-    conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, college_id INTEGER, UNIQUE(teacher_id, college_id))")
-    conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, college_id INTEGER, UNIQUE(roll_no, college_id))")
-    conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, college_id INTEGER)")
-    conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ('Punjab College', 'admin1', 'pc123', 8))
-    conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ('Superior College', 'admin2', 'sc123', 5))
-    conn.commit()
-    conn.close()
-
-
-def initialize_sync_operations():
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            'CREATE TABLE IF NOT EXISTS sync_operations '
-            '(operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)'
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    with _database_initialization_lock:
+        if _database_initialized:
+            return
+        get_database_url()
+        from setup_db import setup_database
+        setup_database()
+        _database_initialized = True
 
 
 def get_db_connection():
+    ensure_database_initialized()
     database_url = get_database_url()
     if database_url.startswith('sqlite'):
         conn = SQLiteCompatConnection(get_local_db_path())
         conn.row_factory = sqlite3.Row
         return conn
-    conn = psycopg2.connect(database_url)
+    conn = psycopg2.connect(database_url, cursor_factory=DictCursor)
     return conn
 
 
@@ -178,9 +193,6 @@ def delete_student_record(cursor, student_id, college_id):
     if student:
         cursor.execute('DELETE FROM attendance WHERE student_roll = %s AND college_id = %s', (student['roll_no'], college_id))
         cursor.execute('DELETE FROM students WHERE id = %s AND college_id = %s', (student_id, college_id))
-
-initialize_local_database()
-initialize_sync_operations()
 
 # 🌐 Global Multi-Language System Core Engine Matrix
 LANG_DICT = {
