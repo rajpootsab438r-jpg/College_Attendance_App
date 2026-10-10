@@ -1,12 +1,11 @@
 {
   "name": "CAS Attendance Management Portal",
   "short_name": "CAS",
-  "description": "Offline-ready college attendance and student management portal.",
+  "description": "Offline-first modern college attendance and student management portal.",
   "start_url": "/",
-  "id": "/",
   "display": "standalone",
-  "background_color": "#f4f6f9",
-  "theme_color": "#28a745",
+  "background_color": "#1b5193",
+  "theme_color": "#1b5193",
   "orientation": "portrait",
   "icons": [
     {
