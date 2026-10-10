@@ -132,7 +132,16 @@ def serve_offline_page():
 
 @app.route('/manifest.json')
 def serve_manifest():
-    return send_file(os.path.join(PROJECT_DIR, 'manifest.json'), mimetype='application/manifest+json')
+    manifest_path = os.path.join(PROJECT_DIR, 'manifest.json')
+    if not os.path.isfile(manifest_path):
+        manifest_path = os.path.join(STATIC_DIR, 'manifest.json')
+    response = send_file(
+        manifest_path,
+        mimetype='application/manifest+json',
+        max_age=0
+    )
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 
 def is_offline_sync_request():
@@ -236,6 +245,7 @@ def welcome():
         <head>
             <title>{t['title']} | Çukur</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <link rel="manifest" href="/manifest.json">
             <style>
                 body {{ 
                     font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 0;
@@ -340,6 +350,7 @@ def login(role):
     return f"""
     <html>
         <head><title>{role.capitalize()} Login</title>
+        <link rel="manifest" href="/manifest.json">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{ font-family: 'Segoe UI', Arial; background: #f4f6f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin:0; }}
@@ -633,6 +644,7 @@ def developer_dashboard():
     <html>
         <head>
             <title>Dev Dashboard</title>
+            <link rel="manifest" href="/manifest.json">
             <style>
                 body { font-family: 'Segoe UI', Arial, sans-serif; padding: 25px; background: #f4f6f9; margin: 0; }
                 h2 { color: #0f5132; margin: 0; }
@@ -659,7 +671,7 @@ def developer_dashboard():
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>
-                    <form method="POST">
+                    <form method="POST" action="/developer/create_college">
                         <input type="hidden" name="action" value="create_new_college">
                         <input type="text" name="college_name" placeholder="College Name (e.g. Punjab College)" required>
                         <input type="text" name="username" placeholder="Admin Username" required>
@@ -712,6 +724,50 @@ def developer_dashboard():
         </body>
     </html>
     """
+# Create college through a dedicated endpoint so Vercel routes the POST explicitly.
+@app.route('/developer/create_college', methods=['POST'])
+def developer_create_college():
+    if 'role' not in session or session['role'] != 'developer':
+        return sync_json_response('error', 401, message='Developer login is required.')
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different developer account.')
+
+    college_name = request.form.get('college_name', '').strip()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+    total_periods = request.form.get('total_periods', '6')
+    if not college_name or not username or not password:
+        return sync_json_response('error', 400, message='College name, username, and password are required.')
+    try:
+        total_periods = int(total_periods)
+    except (TypeError, ValueError):
+        return sync_json_response('error', 400, message='Total periods must be a number.')
+    if total_periods < 1:
+        return sync_json_response('error', 400, message='Total periods must be positive.')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        already_processed = begin_sync_operation(cursor)
+        if already_processed:
+            conn.commit()
+            return sync_json_response()
+        cursor.execute(
+            'INSERT INTO admins (college_name, username, password, total_periods) VALUES (%s, %s, %s, %s)',
+            (college_name, username, password, total_periods)
+        )
+        conn.commit()
+    except ValueError as error:
+        conn.rollback()
+        return sync_json_response('error', 400, message=str(error))
+    except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+        conn.rollback()
+        return sync_json_response('error', 409, message='That admin username already exists.')
+    finally:
+        conn.close()
+
+    return sync_json_response()
+
 # 5. DEVELOPER DELETION SYSTEM ENDPOINTS
 @app.route('/developer/delete/college/<int:id>', methods=['POST'])
 def developer_delete_college(id):

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'college-attendance-v3';
+const CACHE_NAME = 'college-attendance-v4';
 const CACHE_PREFIX = 'college-attendance-';
 const OFFLINE_URL = '/offline';
 const SYNC_TAG = 'sync-cukur-data';
@@ -199,6 +199,7 @@ function allowedQueueUrl(value) {
     url.pathname === '/admin/dashboard' ||
     url.pathname === '/admin/import_students' ||
     url.pathname === '/developer/dashboard' ||
+    url.pathname === '/developer/create_college' ||
     /^\/developer\/delete\/(college|teacher|student)\/\d+$/.test(url.pathname);
 }
 
