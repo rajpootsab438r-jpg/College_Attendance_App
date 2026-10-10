@@ -73,32 +73,47 @@
         
     </style>
     <script>
-        function markInstantAttendance(studentRoll, targetStatus) {
+        async function markInstantAttendance(studentRoll, targetStatus) {
             var selectedDate = document.getElementById('global_date').value;
             var selectedPeriod = document.getElementById('global_period').value;
-            fetch('/teacher/quick_attendance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ roll: studentRoll, status: targetStatus, date: selectedDate, period: selectedPeriod })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if(data.status === 'success') {
-                    var statusCell = document.getElementById('status-box-' + studentRoll);
-                    var isUrdu = "{% if current_lang == 'ur' %}true{% else %}false{% endif %}" === "true";
-                    
-                    if(targetStatus === 'Present') {
-                        statusCell.innerHTML = '<span class="badge-present">' + (isUrdu ? 'حاضر ✅' : 'Present ✅') + '</span>';
-                    } else if(targetStatus === 'Absent') {
-                        statusCell.innerHTML = '<span class="badge-absent">' + (isUrdu ? 'غیر حاضر ❌' : 'Absent ❌') + '</span>';
-                    } else if(targetStatus === 'Leave') {
-                        statusCell.innerHTML = '<span class="badge-leave">' + (isUrdu ? 'رخصت 📝' : 'Leave 📝') + '</span>';
-                    } else if(targetStatus === 'Vacation') {
-                        statusCell.innerHTML = '<span class="badge-vacation">' + (isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️') + '</span>';
-                    }
+            const statusCell = document.getElementById('status-box-' + studentRoll);
+            const isUrdu = "{% if current_lang == 'ur' %}true{% else %}false{% endif %}" === "true";
+            const labels = {
+                Present: ['badge-present', isUrdu ? 'حاضر ✅' : 'Present ✅'],
+                Absent: ['badge-absent', isUrdu ? 'غیر حاضر ❌' : 'Absent ❌'],
+                Leave: ['badge-leave', isUrdu ? 'رخصت 📝' : 'Leave 📝'],
+                Vacation: ['badge-vacation', isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️']
+            };
+            if (!statusCell || !labels[targetStatus]) return;
+
+            try {
+                const body = JSON.stringify({
+                    roll: studentRoll,
+                    status: targetStatus,
+                    date: selectedDate,
+                    period: selectedPeriod
+                });
+                const result = await window.OfflineSync.sendOrQueue(
+                    '/teacher/quick_attendance',
+                    body,
+                    'application/json',
+                    'pending_attendance'
+                );
+                statusCell.textContent = '';
+                const badge = document.createElement('span');
+                badge.className = labels[targetStatus][0];
+                badge.textContent = labels[targetStatus][1] + (result.queued ? ' ⏳' : '');
+                statusCell.appendChild(badge);
+                if (result.queued) {
+                    window.OfflineSync.updatePendingCount(
+                        'Attendance saved on this device and will sync automatically when online.'
+                    );
                 }
-            })
-            .catch(error => console.error('Error:', error));
+            } catch (error) {
+                window.OfflineSync.updatePendingCount(
+                    error instanceof Error ? error.message : 'Attendance could not be saved.'
+                );
+            }
         }
 
         function toggleDesktopView() {
@@ -128,7 +143,7 @@
         }
     </script>
 </head>
-<body>
+<body data-offline-actor="teacher:{{ session.get('user_id') }}">
 
 <!-- ⚡ Top Custom Functional Purple Navigation Control Bar -->
 <div class="top-nav-bar">
@@ -248,6 +263,9 @@
     </div>
     {% endif %}
 <script>
+  window.addEventListener('load', () => {
+    window.OfflineSync?.requestSync();
+  });
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js')
@@ -256,5 +274,6 @@
     });
   }
 </script>
+<script src="/static/offline-sync.js"></script>
 </body>
 </html>

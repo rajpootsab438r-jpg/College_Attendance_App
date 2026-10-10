@@ -1,8 +1,7 @@
 import os
 import sqlite3
-import tempfile
 from urllib.parse import urlparse
-from flask import Flask, render_template, request, redirect, url_for, session, send_file, send_from_directory
+from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime
@@ -75,16 +74,18 @@ app.secret_key = os.environ.get("SECRET_KEY", "attendance_cukur_secret_key_123")
 def get_database_url():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
+        if os.environ.get("VERCEL") == "1":
+            raise RuntimeError("Set DATABASE_URL to a persistent PostgreSQL database on Vercel.")
         database_url = "sqlite:///college_attendance_app.db"
         os.environ["DATABASE_URL"] = database_url
+    if os.environ.get("VERCEL") == "1" and database_url.startswith("sqlite"):
+        raise RuntimeError("SQLite is not persistent on Vercel. Set DATABASE_URL to a persistent PostgreSQL database.")
     return database_url
 
 def get_local_db_path():
     database_url = get_database_url()
     if not database_url.startswith("sqlite"):
         return None
-    if os.environ.get("VERCEL") == "1":
-        return os.path.join(tempfile.gettempdir(), "college_attendance_app.db")
     parsed = urlparse(database_url)
     db_name = parsed.path.lstrip("/") or "college_attendance_app.db"
     if not os.path.isabs(db_name):
@@ -104,6 +105,35 @@ def serve_offline_page():
 def serve_manifest():
     return send_file(os.path.join(PROJECT_DIR, 'manifest.json'), mimetype='application/manifest+json')
 
+
+def is_offline_sync_request():
+    return request.headers.get('X-Offline-Sync') == '1'
+
+
+def offline_sync_actor_matches(role, actor_id):
+    if not is_offline_sync_request():
+        return True
+    expected_actor = f'{role}:{actor_id}'
+    return request.headers.get('X-Sync-Actor') == expected_actor
+
+
+def sync_json_response(status='success', http_status=200, **payload):
+    return jsonify({"status": status, **payload}), http_status
+
+
+def begin_sync_operation(cursor):
+    if not is_offline_sync_request():
+        return False
+    operation_id = request.headers.get('X-Sync-Operation', '').strip()
+    if not operation_id or len(operation_id) > 128:
+        raise ValueError('A valid X-Sync-Operation header is required.')
+    cursor.execute(
+        'INSERT INTO sync_operations (operation_id) VALUES (%s) ON CONFLICT (operation_id) DO NOTHING',
+        (operation_id,)
+    )
+    return cursor.rowcount == 0
+
+
 def initialize_local_database():
     if not get_database_url().startswith('sqlite'):
         return
@@ -119,6 +149,19 @@ def initialize_local_database():
     conn.close()
 
 
+def initialize_sync_operations():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'CREATE TABLE IF NOT EXISTS sync_operations '
+            '(operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)'
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_db_connection():
     database_url = get_database_url()
     if database_url.startswith('sqlite'):
@@ -128,7 +171,16 @@ def get_db_connection():
     conn = psycopg2.connect(database_url)
     return conn
 
+
+def delete_student_record(cursor, student_id, college_id):
+    cursor.execute('SELECT roll_no FROM students WHERE id = %s AND college_id = %s', (student_id, college_id))
+    student = cursor.fetchone()
+    if student:
+        cursor.execute('DELETE FROM attendance WHERE student_roll = %s AND college_id = %s', (student['roll_no'], college_id))
+        cursor.execute('DELETE FROM students WHERE id = %s AND college_id = %s', (student_id, college_id))
+
 initialize_local_database()
+initialize_sync_operations()
 
 # 🌐 Global Multi-Language System Core Engine Matrix
 LANG_DICT = {
@@ -300,6 +352,8 @@ def login(role):
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
     if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
+    if not offline_sync_actor_matches('admin', session.get('user_id')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different admin account.')
     college_id = session.get('user_id')
     current_username = session.get('user')
     college_name = session.get('college_name')
@@ -313,6 +367,23 @@ def admin_dashboard():
     
     if request.method == 'POST':
         action = request.form.get('action')
+        mutation_actions = {
+            'change_username', 'add_teacher', 'add_student', 'edit_teacher_admin',
+            'edit_student_admin', 'delete_teacher', 'delete_student'
+        }
+        if is_offline_sync_request() and action not in mutation_actions:
+            conn.close()
+            return sync_json_response('error', 400, message='Unsupported admin action.')
+        if action in mutation_actions:
+            try:
+                already_processed = begin_sync_operation(cursor)
+            except ValueError as error:
+                conn.close()
+                return sync_json_response('error', 400, message=str(error))
+            if already_processed:
+                conn.commit()
+                conn.close()
+                return sync_json_response()
         if action == 'change_username':
             new_user = request.form['new_username']
             cursor.execute('UPDATE admins SET username = %s WHERE id = %s', (new_user, college_id))
@@ -346,8 +417,11 @@ def admin_dashboard():
             conn.commit()
         elif action == 'delete_student':
             student_id = request.form.get('id')
-            cursor.execute('DELETE FROM students WHERE id=%s AND college_id=%s', (student_id, college_id))
+            delete_student_record(cursor, student_id, college_id)
             conn.commit()
+        if is_offline_sync_request():
+            conn.close()
+            return sync_json_response()
     if selected_program and selected_part:
         cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s AND part = %s ORDER BY roll_no ASC', (college_id, selected_program, selected_part))
     elif selected_program:
@@ -390,21 +464,101 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_lang=current_lang, edit_teacher=edit_teacher_data, edit_student=edit_student_data)
+
+@app.route('/admin/import_students', methods=['POST'])
+def import_students():
+    if 'role' not in session or session['role'] != 'admin':
+        return jsonify({"error": "Unauthorized"}), 401
+    if not offline_sync_actor_matches('admin', session.get('user_id')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different admin account.')
+
+    payload = request.get_json()
+    rows = payload.get('rows') if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows or len(rows) > 500:
+        return jsonify({"error": "Provide between 1 and 500 student rows."}), 400
+
+    clean_rows = []
+    for row_number, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            return jsonify({"error": f"Row {row_number} is invalid."}), 400
+        fields = {}
+        for field in ('roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part'):
+            value = row.get(field, '')
+            if not isinstance(value, str):
+                return jsonify({"error": f"Row {row_number}: {field} must be text."}), 400
+            fields[field] = value.strip()
+        if not all(fields[field] for field in ('roll_no', 'student_name', 'father_name', 'program', 'part')):
+            return jsonify({"error": f"Row {row_number} is missing a required value."}), 400
+        clean_rows.append(fields)
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        try:
+            already_processed = begin_sync_operation(cursor)
+        except ValueError as error:
+            return sync_json_response('error', 400, message=str(error))
+        if already_processed:
+            conn.commit()
+            return sync_json_response(imported=0, skipped=len(clean_rows))
+        imported = 0
+        for row in clean_rows:
+            cursor.execute(
+                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (roll_no, college_id) DO NOTHING',
+                (row['roll_no'], row['student_name'], row['father_name'], row['phone_number'],
+                 row['program'], row['part'], session['user_id'])
+            )
+            imported += cursor.rowcount
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return sync_json_response(imported=imported, skipped=len(clean_rows) - imported)
+
 # 4. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
 def developer_dashboard():
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different developer account.')
     conn = get_db_connection()
     cursor = conn.cursor()
     
     if request.method == 'POST':
         action = request.form.get('action')
+        mutation_actions = {
+            'create_new_college', 'update_college_periods', 'edit_college_admin_dev',
+            'update_teacher_dev', 'update_student_dev'
+        }
+        if is_offline_sync_request() and action not in mutation_actions:
+            conn.close()
+            return sync_json_response('error', 400, message='Unsupported developer action.')
+        if action in mutation_actions:
+            try:
+                already_processed = begin_sync_operation(cursor)
+            except ValueError as error:
+                conn.close()
+                return sync_json_response('error', 400, message=str(error))
+            if already_processed:
+                conn.commit()
+                conn.close()
+                return sync_json_response()
         if action == 'create_new_college':
             try:
                 cursor.execute('INSERT INTO admins (college_name, username, password, total_periods) VALUES (%s, %s, %s, %s)', 
                              (request.form['college_name'], request.form['username'], request.form['password'], request.form.get('total_periods', 6)))
                 conn.commit()
-            except psycopg2.IntegrityError: conn.rollback()
+            except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+                conn.rollback()
+                if is_offline_sync_request():
+                    conn.close()
+                    return sync_json_response('error', 409, message='That admin username already exists.')
+                conn.close()
+                return 'That admin username already exists.', 409
         elif action == 'update_college_periods':
             cursor.execute('UPDATE admins SET total_periods=%s WHERE id=%s', (request.form['total_periods'], request.form['college_id']))
             conn.commit()
@@ -420,6 +574,9 @@ def developer_dashboard():
             cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s',
                          (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form.get('phone_number', ''), request.form['program'], request.form['part'], request.form['id']))
             conn.commit()
+        if is_offline_sync_request():
+            conn.close()
+            return sync_json_response()
     cursor.execute('SELECT * FROM admins ORDER BY id DESC')
     colleges = cursor.fetchall()
     selected_college_id = request.args.get('filter_college')
@@ -448,9 +605,9 @@ def developer_dashboard():
         cursor.execute('SELECT * FROM students WHERE id=%s', (request.args.get('edit_s'),))
         edit_s_data = cursor.fetchone()
         
-    college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{c['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/college/{c['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Account Master?\")'>Delete ❌</a></div></td></tr>" for c in colleges])
-    teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;color:#198754;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['subject']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/teacher/{t['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Teacher?\")'>Delete ❌</a></div></td></tr>" for t in all_teachers])
-    student_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_s={s['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><a href='/developer/delete/student/{s['id']}' style='color:#dc3545;font-weight:bold;text-decoration:none;font-size:12px;' onclick='return confirm(\"Delete Student?\")'>Delete ❌</a></div></td></tr>" for s in all_students])
+    college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{c['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/college/{c['id']}' onsubmit='return confirm(\"Delete Account Master?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for c in colleges])
+    teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;color:#198754;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['subject']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/teacher/{t['id']}' onsubmit='return confirm(\"Delete Teacher?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for t in all_teachers])
+    student_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_s={s['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/student/{s['id']}' onsubmit='return confirm(\"Delete Student?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for s in all_students])
 
     edit_box = ""
     if edit_c_data:
@@ -480,7 +637,7 @@ def developer_dashboard():
                 .full-width { flex: 1 1 100%; }
             </style>
         </head>
-        <body>
+        <body data-offline-actor="developer:Cukur" data-offline-queue-forms="true">
             <div class="header-bar">
                 <h2>🛠️ Çukur Master Developer Panel Control Console</h2>
                 <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
@@ -533,38 +690,90 @@ def developer_dashboard():
                     </table>
                 </div>
             </div>
+            <script src="/static/offline-sync.js"></script>
+            <script>
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('/sw.js', {scope: '/'})
+                        .catch(error => console.error('Service worker registration failed:', error));
+                }
+            </script>
         </body>
     </html>
     """
 # 5. DEVELOPER DELETION SYSTEM ENDPOINTS
-@app.route('/developer/delete/college/<int:id>')
+@app.route('/developer/delete/college/<int:id>', methods=['POST'])
 def developer_delete_college(id):
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different developer account.')
     conn = get_db_connection()
     cursor = conn.cursor()
+    try:
+        already_processed = begin_sync_operation(cursor)
+    except ValueError as error:
+        conn.close()
+        return sync_json_response('error', 400, message=str(error))
+    if already_processed:
+        conn.commit()
+        conn.close()
+        return sync_json_response()
+    cursor.execute('DELETE FROM attendance WHERE college_id = %s', (id,))
+    cursor.execute('DELETE FROM students WHERE college_id = %s', (id,))
+    cursor.execute('DELETE FROM teachers WHERE college_id = %s', (id,))
     cursor.execute('DELETE FROM admins WHERE id = %s', (id,))
     conn.commit()
     conn.close()
+    if is_offline_sync_request():
+        return sync_json_response()
     return redirect(url_for('developer_dashboard'))
 
-@app.route('/developer/delete/teacher/<int:id>')
+@app.route('/developer/delete/teacher/<int:id>', methods=['POST'])
 def developer_delete_teacher(id):
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different developer account.')
     conn = get_db_connection()
     cursor = conn.cursor()
+    try:
+        already_processed = begin_sync_operation(cursor)
+    except ValueError as error:
+        conn.close()
+        return sync_json_response('error', 400, message=str(error))
+    if already_processed:
+        conn.commit()
+        conn.close()
+        return sync_json_response()
     cursor.execute('DELETE FROM teachers WHERE id = %s', (id,))
     conn.commit()
     conn.close()
+    if is_offline_sync_request():
+        return sync_json_response()
     return redirect(url_for('developer_dashboard'))
 
-@app.route('/developer/delete/student/<int:id>')
+@app.route('/developer/delete/student/<int:id>', methods=['POST'])
 def developer_delete_student(id):
     if 'role' not in session or session['role'] != 'developer': return redirect(url_for('welcome'))
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different developer account.')
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM students WHERE id = %s', (id,))
+    try:
+        already_processed = begin_sync_operation(cursor)
+    except ValueError as error:
+        conn.close()
+        return sync_json_response('error', 400, message=str(error))
+    if already_processed:
+        conn.commit()
+        conn.close()
+        return sync_json_response()
+    cursor.execute('SELECT college_id FROM students WHERE id = %s', (id,))
+    student = cursor.fetchone()
+    if student:
+        delete_student_record(cursor, id, student['college_id'])
     conn.commit()
     conn.close()
+    if is_offline_sync_request():
+        return sync_json_response()
     return redirect(url_for('developer_dashboard'))
 # 6. FACULTY TEACHER ATTTENDANCE ENGINE
 @app.route('/teacher/dashboard')
@@ -603,17 +812,50 @@ def teacher_dashboard():
 
 @app.route('/teacher/quick_attendance', methods=['POST'])
 def quick_attendance():
-    if 'role' not in session or session['role'] != 'teacher': return {"status": "error", "message": "Unauthorized"}, 401
-    data = request.get_json()
+    if 'role' not in session or session['role'] != 'teacher':
+        return sync_json_response('error', 401, message='Unauthorized.')
+    if not offline_sync_actor_matches('teacher', session.get('user_id')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different teacher account.')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return sync_json_response('error', 400, message='Expected a JSON attendance record.')
     roll = data.get('roll')
     status = data.get('status') 
     att_date = data.get('date')
-    period_no = int(data.get('period', 1))
+    if not isinstance(roll, str) or not roll.strip():
+        return sync_json_response('error', 400, message='A student roll number is required.')
+    if status not in {'Present', 'Absent', 'Leave', 'Vacation'}:
+        return sync_json_response('error', 400, message='Unsupported attendance status.')
+    if not isinstance(att_date, str) or not att_date:
+        return sync_json_response('error', 400, message='An attendance date is required.')
+    try:
+        period_no = int(data.get('period', 1))
+    except (TypeError, ValueError):
+        return sync_json_response('error', 400, message='Period must be a number.')
+    if period_no < 1:
+        return sync_json_response('error', 400, message='Period must be positive.')
     teacher_username = session.get('user')
     college_id = session.get('college_id')
     
     conn = get_db_connection()
     cursor = conn.cursor()
+    try:
+        already_processed = begin_sync_operation(cursor)
+    except ValueError as error:
+        conn.close()
+        return sync_json_response('error', 400, message=str(error))
+    if already_processed:
+        conn.commit()
+        conn.close()
+        return sync_json_response(current_status=status)
+    cursor.execute(
+        'SELECT id FROM students WHERE roll_no = %s AND college_id = %s',
+        (roll.strip(), college_id)
+    )
+    if not cursor.fetchone():
+        conn.rollback()
+        conn.close()
+        return sync_json_response('error', 404, message='Student not found in this college.')
     cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', (roll, att_date, period_no, college_id))
     existing = cursor.fetchone()
     
@@ -624,7 +866,7 @@ def quick_attendance():
         
     conn.commit()
     conn.close()
-    return {"status": "success", "current_status": status}
+    return sync_json_response(current_status=status)
 
 # 📥 FIXED REAL APP DOWNLOAD ROUTE LINK INTERFACE: Direct dynamic target redirection mapping to bypass asset errors
 @app.route('/download/proposal-pdf')
@@ -668,4 +910,3 @@ application = app
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
-

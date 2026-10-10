@@ -121,7 +121,7 @@
         }
     </script>
 </head>
-<body>
+<body data-offline-actor="admin:{{ session.get('user_id') }}" data-offline-queue-forms="true">
 <div class="top-nav-bar">
     <div style="position: relative; display: inline-block;">
         <button class="burger-menu-btn" onclick="toggleMenuDrawer()">☰</button>
@@ -192,6 +192,29 @@
             </select> 
             <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button> 
         </form> 
+    </div>
+</div>
+<div class="grid" style="margin-top: 20px;">
+    <div class="card full-width">
+        <h3>📷 Scan / Import Student List</h3>
+        <p>Choose or photograph a clear list. OCR runs in this browser; check and correct the recognized rows before importing.</p>
+        <label for="student-scan-image">Photo or scanned image</label>
+        <input id="student-scan-image" type="file" accept="image/*" capture="environment">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <select id="scan-program" required>
+                <option value="">-- Select Program --</option>
+                <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option>
+            </select>
+            <select id="scan-part" required>
+                <option value="">-- Select Part / Semester --</option>
+                <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option>
+            </select>
+        </div>
+        <button id="scan-students-button" type="button">Scan image (OCR)</button>
+        <p>Review the text below. Each row must be separated into columns with tabs, |, or at least two spaces: roll number, student name, father name, optional phone number.</p>
+        <textarea id="scan-students-text" rows="10" style="width:100%;box-sizing:border-box;padding:12px;" placeholder="Roll number | Student name | Father name | Phone (optional)"></textarea>
+        <button id="import-scanned-students" type="button" class="btn-success">Review and add students</button>
+        <p id="scan-status" role="status" aria-live="polite"></p>
     </div>
 </div>
 <!-- 📝 Dynamic Optional Fields Safe Overlay Editors Box -->
@@ -306,6 +329,88 @@
     </table>
 </div>
 <script>
+  document.getElementById('scan-students-button').addEventListener('click', async function() {
+    const file = document.getElementById('student-scan-image').files[0];
+    const status = document.getElementById('scan-status');
+    if (!file) {
+      status.textContent = 'Choose or take a clear image first.';
+      return;
+    }
+    if (!window.Tesseract) {
+      status.textContent = 'OCR library could not load. Check your connection, then retry; you can also paste tab-separated text below.';
+      return;
+    }
+    this.disabled = true;
+    status.textContent = 'Reading image. Large pages may take a little while...';
+    let worker;
+    try {
+      worker = await Tesseract.createWorker('eng');
+      const result = await worker.recognize(file);
+      document.getElementById('scan-students-text').value = result.data.text;
+      status.textContent = 'Scan finished. Check every row and correct OCR mistakes before importing.';
+    } catch (error) {
+      status.textContent = 'Scan failed: ' + error.message;
+    } finally {
+      if (worker) await worker.terminate();
+      this.disabled = false;
+    }
+  });
+
+  document.getElementById('import-scanned-students').addEventListener('click', async function() {
+    const status = document.getElementById('scan-status');
+    const program = document.getElementById('scan-program').value;
+    const part = document.getElementById('scan-part').value;
+    const text = document.getElementById('scan-students-text').value.trim();
+    if (!program || !part) {
+      status.textContent = 'Select the program and part/semester for this list.';
+      return;
+    }
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const rows = [];
+    for (let index = 0; index < lines.length; index++) {
+      const columns = lines[index].split(/\t+|\s{2,}|\s*\|\s*/).map(value => value.trim()).filter(Boolean);
+      if (columns.length < 3 || columns.length > 4) {
+        status.textContent = 'Could not read row ' + (index + 1) + '. Use: roll number | student name | father name | optional phone. Fix the text and retry.';
+        return;
+      }
+      rows.push({
+        roll_no: columns[0],
+        student_name: columns[1],
+        father_name: columns[2],
+        phone_number: columns[3] || '',
+        program: program,
+        part: part
+      });
+    }
+    if (!rows.length) {
+      status.textContent = 'No student rows found. Scan an image or enter rows above.';
+      return;
+    }
+    if (!window.confirm('Review complete? Import ' + rows.length + ' rows now? Duplicate roll numbers will be skipped.')) return;
+
+    this.disabled = true;
+    status.textContent = 'Importing ' + rows.length + ' student rows...';
+    try {
+      const result = await window.OfflineSync.sendOrQueue(
+        '/admin/import_students',
+        JSON.stringify({rows: rows}),
+        'application/json',
+        'pending_student_import'
+      );
+      if (result.queued) {
+        status.textContent = rows.length + ' students saved on this device and will sync automatically when online.';
+        window.OfflineSync.updatePendingCount(status.textContent);
+      } else {
+        status.textContent = result.result.imported + ' students added; ' + result.result.skipped + ' duplicate rows skipped.';
+        window.location.href = '/admin/dashboard';
+      }
+    } catch (error) {
+      status.textContent = 'Import failed: ' + error.message;
+    } finally {
+      this.disabled = false;
+    }
+  });
+
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js')
@@ -314,5 +419,7 @@
     });
   }
 </script>
+<script src="/static/offline-sync.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </body>
 </html>
