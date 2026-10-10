@@ -12,10 +12,5 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
-  ],
-  "functions": {
-    "app.py": {
-      "includeFiles": "{templates/**,static/**,manifest.json,setup_db.py}"
-    }
-  }
+  ]
 }
