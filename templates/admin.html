@@ -358,6 +358,7 @@
         </tbody> 
     </table>
 </div>
+<script src="/static/offline-sync.js"></script>
 <script>
   (function() {
     const form = document.getElementById('admin-filter-form');
@@ -379,31 +380,63 @@
       })[character]);
     }
 
-    function renderStudents(students) {
-      tableBody.innerHTML = students.map(student => {
-        const id = escapeHtml(student.id);
-        const studentName = escapeHtml(student.student_name);
-        const roll = escapeHtml(student.roll_no);
-        return `<tr>
-          <td><b>${roll}</b></td>
-          <td>${studentName}</td>
-          <td>${escapeHtml(student.father_name)}</td>
-          <td>${escapeHtml(student.phone_number || '-')}</td>
-          <td>${escapeHtml(student.program)}</td>
-          <td>${escapeHtml(student.part)}</td>
-          <td style="color:#198754;font-weight:bold;">${escapeHtml(student.percentage)}%
-            <a href="/admin/download_student_report/${encodeURIComponent(student.id)}" target="_blank" style="margin-left:8px;background:#198754;color:white;padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;display:inline-block;">PDF 📄</a>
-          </td>
-          <td><div style="display:flex;gap:8px;align-items:center;">
-            <a href="/admin/dashboard?edit_s=${encodeURIComponent(student.id)}" style="background:#007bff;color:white;padding:6px 12px;border-radius:4px;font-weight:bold;font-size:13px;text-decoration:none;display:inline-block;">📝</a>
-            <form method="POST" action="/admin/dashboard" style="display:inline;margin:0;" onsubmit="return confirm('Delete Student?')">
-              <input type="hidden" name="action" value="delete_student">
-              <input type="hidden" name="id" value="${id}">
-              <button type="submit" class="del-btn">❌</button>
-            </form>
-          </div></td>
-        </tr>`;
-      }).join('');
+    function normalizeStudents(payload) {
+      const records = Array.isArray(payload) ? payload : payload?.students;
+      if (!Array.isArray(records)) throw new Error('The student response did not contain a student array.');
+      return records.map((student, index) => {
+        if (!student || typeof student !== 'object' || Array.isArray(student)) {
+          throw new Error(`Student row ${index + 1} is not a valid record.`);
+        }
+        const id = student.id ?? student.student_id;
+        const roll = student.roll_no ?? student.roll;
+        const name = student.student_name ?? student.name;
+        if (id === null || id === undefined || String(roll ?? '').trim() === '' ||
+            String(name ?? '').trim() === '') {
+          throw new Error(`Student row ${index + 1} is missing its ID, roll number, or name.`);
+        }
+        return { ...student, id, roll_no: String(roll), student_name: String(name) };
+      });
+    }
+
+    function renderFallback(text) {
+      tableBody.innerHTML = '';
+      tableBody.innerHTML = `<tr><td colspan="8" role="status">${escapeHtml(text)}</td></tr>`;
+    }
+
+    function renderStudents(payload) {
+      try {
+        const students = normalizeStudents(payload);
+        const rows = students.map(student => {
+          const id = escapeHtml(student.id);
+          const studentName = escapeHtml(student.student_name);
+          const roll = escapeHtml(student.roll_no);
+          return `<tr>
+            <td><b>${roll}</b></td>
+            <td>${studentName}</td>
+            <td>${escapeHtml(student.father_name || '-')}</td>
+            <td>${escapeHtml(student.phone_number || '-')}</td>
+            <td>${escapeHtml(student.program || '-')}</td>
+            <td>${escapeHtml(student.part || '-')}</td>
+            <td style="color:#198754;font-weight:bold;">${escapeHtml(student.percentage ?? 0)}%
+              <a href="/admin/download_student_report/${encodeURIComponent(student.id)}" target="_blank" style="margin-left:8px;background:#198754;color:white;padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;display:inline-block;">PDF 📄</a>
+            </td>
+            <td><div style="display:flex;gap:8px;align-items:center;">
+              <a href="/admin/dashboard?edit_s=${encodeURIComponent(student.id)}" style="background:#007bff;color:white;padding:6px 12px;border-radius:4px;font-weight:bold;font-size:13px;text-decoration:none;display:inline-block;">📝</a>
+              <form method="POST" action="/admin/dashboard" style="display:inline;margin:0;" onsubmit="return confirm('Delete Student?')">
+                <input type="hidden" name="action" value="delete_student">
+                <input type="hidden" name="id" value="${id}">
+                <button type="submit" class="del-btn">❌</button>
+              </form>
+            </div></td>
+          </tr>`;
+        });
+        tableBody.innerHTML = '';
+        tableBody.innerHTML = rows.join('');
+        return true;
+      } catch (error) {
+        renderFallback(error instanceof Error ? error.message : 'Could not render the student list.');
+        return false;
+      }
     }
 
     function updateFilterLabel(program, part) {
@@ -429,17 +462,19 @@
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
           });
-          const result = await response.json();
-          if (!response.ok || !Array.isArray(result.students)) {
-            throw new Error(result.message || `Could not load students (HTTP ${response.status}).`);
+          if (!response.ok) {
+            throw new Error(`Could not load students (HTTP ${response.status}).`);
           }
+          const result = await response.json();
           if (sequence !== refreshSequence) return;
-          renderStudents(result.students);
-          await window.OfflineSync.saveSnapshot(key, result.students);
+          if (!renderStudents(result)) return;
+          await window.OfflineSync.saveSnapshot(key, normalizeStudents(result));
           return;
         } catch (error) {
-          if (navigator.onLine && !(error instanceof TypeError)) {
-            message.textContent = error.message;
+          if (!(error instanceof TypeError)) {
+            const errorMessage = error instanceof Error ? error.message : 'Could not load students.';
+            message.textContent = errorMessage;
+            renderFallback(errorMessage);
             return;
           }
         }
@@ -448,16 +483,19 @@
       try {
         const students = await window.OfflineSync.getSnapshot(key);
         if (sequence !== refreshSequence) return;
-        if (!Array.isArray(students)) {
-          message.textContent = 'This student filter has not been saved for offline use. Connect and open this filter once first.';
-          renderStudents([]);
+        if (students === null || students === undefined) {
+          const errorMessage = 'This student filter has not been saved for offline use. Connect and open this filter once first.';
+          message.textContent = errorMessage;
+          renderFallback(errorMessage);
           return;
         }
-        renderStudents(students);
+        if (!renderStudents(students)) return;
         message.textContent = 'Showing the last saved student list (offline).';
       } catch (error) {
         if (sequence !== refreshSequence) return;
-        message.textContent = error instanceof Error ? error.message : 'Could not read the saved student list.';
+        const errorMessage = error instanceof Error ? error.message : 'Could not read the saved student list.';
+        message.textContent = errorMessage;
+        renderFallback(errorMessage);
       }
     }
 
@@ -572,7 +610,6 @@
     });
   }
 </script>
-<script src="/static/offline-sync.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </body>
 </html>

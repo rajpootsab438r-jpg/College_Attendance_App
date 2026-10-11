@@ -262,6 +262,7 @@
             {% if current_lang == 'ur' %}⚠️ اس کلاس میں کوئی طالب علم موجود نہیں ہے!{% else %}⚠️ No student found in this class!{% endif %}
         </div>
     </div>
+<script src="/static/offline-sync.js"></script>
 <script>
   (function() {
     const form = document.getElementById('attendance-setup-form');
@@ -277,8 +278,6 @@
     const message = document.getElementById('attendance-filter-message');
     const actor = document.body.dataset.offlineActor;
     const isUrdu = "{{ 'true' if current_lang == 'ur' else 'false' }}" === 'true';
-    if (!form || !window.OfflineSync) return;
-
     function snapshotKey() {
       return `teacher-attendance:${actor}:${programSelect.value}:${partSelect.value}:${dateInput.value}:${periodSelect.value}`;
     }
@@ -289,36 +288,85 @@
       })[character]);
     }
 
-    function renderStudents(students) {
-      const statusLabels = {
-        Present: ['badge-present', isUrdu ? 'حاضر ✅' : 'Present ✅'],
-        Absent: ['badge-absent', isUrdu ? 'غیر حاضر ❌' : 'Absent ❌'],
-        Leave: ['badge-leave', isUrdu ? 'رخصت 📝' : 'Leave 📝'],
-        Vacation: ['badge-vacation', isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️']
-      };
-      tableBody.innerHTML = students.map(student => {
-        const studentId = escapeHtml(student.id);
-        const roll = escapeHtml(student.roll_no);
-        const savedStatus = statusLabels[student.saved_status];
-        const badge = savedStatus
-          ? `<span class="${savedStatus[0]}">${savedStatus[1]}</span>`
-          : '';
-        return `<tr>
-          <td><b>${roll}</b></td>
-          <td>${escapeHtml(student.student_name)}</td>
-          <td>${escapeHtml(student.father_name)}</td>
-          <td id="status-box-${roll}">${badge}</td>
-          <td><div class="action-container">
-            <button type="button" name="status" value="Present" data-student-id="${studentId}" data-roll="${roll}" data-status="Present" class="btn-action-p">${isUrdu ? 'حاضر' : 'Present'}</button>
-            <button type="button" name="status" value="Absent" data-student-id="${studentId}" data-roll="${roll}" data-status="Absent" class="btn-action-a">${isUrdu ? 'غیر حاضر' : 'Absent'}</button>
-            <button type="button" name="status" value="Leave" data-student-id="${studentId}" data-roll="${roll}" data-status="Leave" class="btn-action-l">${isUrdu ? 'رخصت' : 'Leave'}</button>
-            <button type="button" name="status" value="Vacation" data-student-id="${studentId}" data-roll="${roll}" data-status="Vacation" class="btn-action-v">${isUrdu ? 'تعطیل' : 'Vacation'}</button>
-          </div></td>
-        </tr>`;
-      }).join('');
-      table.hidden = students.length === 0;
-      emptyState.hidden = students.length !== 0 || !programSelect.value || !partSelect.value;
+    function normalizeStudents(payload) {
+      const records = Array.isArray(payload) ? payload : payload?.students;
+      if (!Array.isArray(records)) {
+        throw new Error('The attendance response did not contain a student array.');
+      }
+      return records.map((student, index) => {
+        if (!student || typeof student !== 'object' || Array.isArray(student)) {
+          throw new Error(`Student row ${index + 1} is not a valid record.`);
+        }
+        const id = student.id ?? student.student_id;
+        const roll = student.roll_no ?? student.roll;
+        const name = student.student_name ?? student.name;
+        if (id === null || id === undefined || String(roll ?? '').trim() === '' ||
+            String(name ?? '').trim() === '') {
+          throw new Error(`Student row ${index + 1} is missing its ID, roll number, or name.`);
+        }
+        return {
+          id,
+          roll_no: String(roll),
+          student_name: String(name),
+          father_name: String(student.father_name ?? ''),
+          saved_status: String(student.saved_status ?? '')
+        };
+      });
     }
+
+    function renderFallback(text) {
+      if (!tableBody || !table || !emptyState) {
+        if (message) message.textContent = text;
+        return;
+      }
+      tableBody.innerHTML = '';
+      tableBody.innerHTML = `<tr><td colspan="5" role="status">${escapeHtml(text)}</td></tr>`;
+      table.hidden = false;
+      emptyState.hidden = true;
+    }
+
+    function renderStudents(payload) {
+      try {
+        const students = normalizeStudents(payload);
+        const rows = students.map(student => {
+          const studentId = escapeHtml(student.id);
+          const roll = escapeHtml(student.roll_no);
+          const savedStatus = Object.prototype.hasOwnProperty.call(statusLabels, student.saved_status)
+            ? statusLabels[student.saved_status]
+            : null;
+          const badge = savedStatus
+            ? `<span class="${savedStatus[0]}">${savedStatus[1]}</span>`
+            : '';
+          return `<tr>
+            <td><b>${roll}</b></td>
+            <td>${escapeHtml(student.student_name)}</td>
+            <td>${escapeHtml(student.father_name || '-')}</td>
+            <td id="status-box-${roll}">${badge}</td>
+            <td><div class="action-container">
+              <button type="button" name="status" value="Present" data-student-id="${studentId}" data-roll="${roll}" data-status="Present" class="btn-action-p">${isUrdu ? 'حاضر' : 'Present'}</button>
+              <button type="button" name="status" value="Absent" data-student-id="${studentId}" data-roll="${roll}" data-status="Absent" class="btn-action-a">${isUrdu ? 'غیر حاضر' : 'Absent'}</button>
+              <button type="button" name="status" value="Leave" data-student-id="${studentId}" data-roll="${roll}" data-status="Leave" class="btn-action-l">${isUrdu ? 'رخصت' : 'Leave'}</button>
+              <button type="button" name="status" value="Vacation" data-student-id="${studentId}" data-roll="${roll}" data-status="Vacation" class="btn-action-v">${isUrdu ? 'تعطیل' : 'Vacation'}</button>
+            </div></td>
+          </tr>`;
+        });
+        tableBody.innerHTML = '';
+        tableBody.innerHTML = rows.join('');
+        table.hidden = students.length === 0;
+        emptyState.hidden = students.length !== 0 || !programSelect.value || !partSelect.value;
+        return true;
+      } catch (error) {
+        renderFallback(error instanceof Error ? error.message : 'Could not render the attendance list.');
+        return false;
+      }
+    }
+
+    const statusLabels = {
+      Present: ['badge-present', isUrdu ? 'حاضر ✅' : 'Present ✅'],
+      Absent: ['badge-absent', isUrdu ? 'غیر حاضر ❌' : 'Absent ❌'],
+      Leave: ['badge-leave', isUrdu ? 'رخصت 📝' : 'Leave 📝'],
+      Vacation: ['badge-vacation', isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️']
+    };
 
     let refreshSequence = 0;
     async function refreshStudents() {
@@ -353,17 +401,19 @@
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
           });
-          const result = await response.json();
-          if (!response.ok || !Array.isArray(result.students)) {
-            throw new Error(result.message || `Could not load attendance (HTTP ${response.status}).`);
+          if (!response.ok) {
+            throw new Error(`Could not load attendance (HTTP ${response.status}).`);
           }
+          const result = await response.json();
           if (sequence !== refreshSequence) return;
-          renderStudents(result.students);
-          await window.OfflineSync.saveSnapshot(key, result.students);
+          if (!renderStudents(result)) return;
+          await window.OfflineSync.saveSnapshot(key, normalizeStudents(result));
           return;
         } catch (error) {
-          if (navigator.onLine && !(error instanceof TypeError)) {
-            message.textContent = error.message;
+          if (!(error instanceof TypeError)) {
+            const errorMessage = error instanceof Error ? error.message : 'Could not load attendance.';
+            message.textContent = errorMessage;
+            renderFallback(errorMessage);
             return;
           }
         }
@@ -372,17 +422,27 @@
       try {
         const students = await window.OfflineSync.getSnapshot(key);
         if (sequence !== refreshSequence) return;
-        if (!Array.isArray(students)) {
-          message.textContent = 'This class/date/period has not been saved for offline use. Connect and open it once first.';
-          renderStudents([]);
+        if (students === null || students === undefined) {
+          const errorMessage = 'This class/date/period has not been saved for offline use. Connect and open it once first.';
+          message.textContent = errorMessage;
+          renderFallback(errorMessage);
           return;
         }
-        renderStudents(students);
+        if (!renderStudents(students)) return;
         message.textContent = 'Showing the last saved attendance list (offline).';
       } catch (error) {
         if (sequence !== refreshSequence) return;
-        message.textContent = error instanceof Error ? error.message : 'Could not read the saved attendance list.';
+        const errorMessage = error instanceof Error ? error.message : 'Could not read the saved attendance list.';
+        message.textContent = errorMessage;
+        renderFallback(errorMessage);
       }
+    }
+
+    if (!form || !programSelect || !partSelect || !dateInput || !periodSelect ||
+        !results || !table || !tableBody || !emptyState || !filterStatus || !message ||
+        !window.OfflineSync) {
+      renderFallback('The attendance filter could not be initialized. Reload the page and try again.');
+      return;
     }
 
     [programSelect, partSelect, dateInput, periodSelect].forEach(control => {
@@ -399,6 +459,7 @@
 
     const initialStudents = {{ students|tojson }};
     if (programSelect.value && partSelect.value) {
+      renderStudents(initialStudents);
       window.OfflineSync.saveSnapshot(snapshotKey(), initialStudents).catch(error => {
         message.textContent = error instanceof Error ? error.message : 'Could not save this attendance list for offline use.';
       });
@@ -416,6 +477,5 @@
     });
   }
 </script>
-<script src="/static/offline-sync.js"></script>
 </body>
 </html>

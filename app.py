@@ -123,7 +123,19 @@ def get_local_db_path():
 
 @app.route('/sw.js')
 def serve_sw():
-    return send_from_directory(STATIC_DIR, 'sw.js', mimetype='application/javascript')
+    response = send_from_directory(
+        STATIC_DIR,
+        'sw.js',
+        mimetype='application/javascript',
+        max_age=0
+    )
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    response.headers['Surrogate-Control'] = 'no-store'
+    response.headers['CDN-Cache-Control'] = 'no-store'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
 
 @app.route('/offline')
 @app.route('/offline.html')
@@ -133,13 +145,57 @@ def serve_offline_page():
 @app.route('/manifest.json')
 def serve_manifest():
     response = send_from_directory(
-        PROJECT_DIR,
+        STATIC_DIR,
         'manifest.json',
         mimetype='application/manifest+json',
         max_age=0
     )
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    response.headers['Surrogate-Control'] = 'no-store'
+    response.headers['CDN-Cache-Control'] = 'no-store'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
+
+
+def add_student_api_headers(response):
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    response.headers['Vary'] = 'Origin'
+    origin = request.headers.get('Origin')
+    if origin:
+        origin_parts = urlparse(origin)
+        if origin_parts.scheme == request.scheme and origin_parts.netloc == request.host:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+
+@app.after_request
+def prevent_student_api_caching(response):
+    if request.endpoint in {'admin_dashboard', 'teacher_dashboard'} and request.args.get('format') == 'json':
+        return add_student_api_headers(response)
+    return response
+
+
+def student_api_response(students, status_code=200):
+    response = jsonify([
+        {
+            'id': student.get('id', student.get('student_id')),
+            'roll_no': student.get('roll_no', student.get('roll')),
+            'student_name': student.get('student_name', student.get('name')),
+            'father_name': student.get('father_name', ''),
+            'phone_number': student.get('phone_number', ''),
+            'program': student.get('program', ''),
+            'part': student.get('part', ''),
+            'saved_status': student.get('saved_status', ''),
+            'percentage': student.get('percentage', 0)
+        }
+        for student in students
+    ])
+    response.status_code = status_code
+    return add_student_api_headers(response)
 
 
 def is_offline_sync_request():
@@ -398,7 +454,10 @@ def login(role):
 # 3. COLLEGE ADMIN DASHBOARD LOGIC
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
-    if 'role' not in session or session['role'] != 'admin': return redirect(url_for('welcome'))
+    if 'role' not in session or session['role'] != 'admin':
+        if request.args.get('format') == 'json':
+            return student_api_response([], 401)
+        return redirect(url_for('welcome'))
     if not offline_sync_actor_matches('admin', session.get('user_id')):
         return sync_json_response('error', 403, message='Queued action belongs to a different admin account.')
     college_id = session.get('user_id')
@@ -497,7 +556,7 @@ def admin_dashboard():
 
     if request.args.get('format') == 'json':
         conn.close()
-        return jsonify({'students': students})
+        return student_api_response(students)
 
     edit_t_id = request.args.get('edit_t')
     edit_s_id = request.args.get('edit_s')
@@ -899,7 +958,10 @@ def developer_delete_student(id):
 # 6. FACULTY TEACHER ATTTENDANCE ENGINE
 @app.route('/teacher/dashboard')
 def teacher_dashboard():
-    if 'role' not in session or session['role'] != 'teacher': return redirect(url_for('welcome'))
+    if 'role' not in session or session['role'] != 'teacher':
+        if request.args.get('format') == 'json':
+            return student_api_response([], 401)
+        return redirect(url_for('welcome'))
     subject = session.get('subject')
     teacher_name = session.get('teacher_name')
     college_id = session.get('college_id')
@@ -939,7 +1001,7 @@ def teacher_dashboard():
             students.append(s_dict)
     conn.close()
     if request.args.get('format') == 'json':
-        return jsonify({'students': students})
+        return student_api_response(students)
     return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, 
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
