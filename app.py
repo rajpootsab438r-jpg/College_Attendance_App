@@ -198,6 +198,19 @@ def student_api_response(students, status_code=200):
     return add_student_api_headers(response)
 
 
+def offline_seed_response(payload, status_code=200):
+    response = jsonify(payload)
+    response.status_code = status_code
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Surrogate-Control'] = 'no-store'
+    response.headers['CDN-Cache-Control'] = 'no-store'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    response.headers['Vary'] = 'Cookie'
+    response.headers['X-Data-Generated-At'] = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+    return response
+
+
 def is_offline_sync_request():
     return request.headers.get('X-Offline-Sync') == '1'
 
@@ -956,6 +969,99 @@ def developer_delete_student(id):
         return sync_json_response()
     return redirect(url_for('developer_dashboard'))
 # 6. FACULTY TEACHER ATTTENDANCE ENGINE
+@app.route('/api/offline_seed_data')
+def offline_seed_data():
+    if session.get('role') != 'teacher':
+        return offline_seed_response({
+            'status': 'error',
+            'message': 'A teacher session is required to load offline attendance data.'
+        }, 401)
+
+    college_id = session.get('college_id')
+    if college_id is None:
+        return offline_seed_response({
+            'status': 'error',
+            'message': 'Teacher college is not configured.'
+        }, 401)
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT id, program, part, roll_no, student_name, father_name '
+            'FROM students WHERE college_id = %s ORDER BY program, part, roll_no',
+            (college_id,)
+        )
+        students = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
+        college = cursor.fetchone()
+        if not college:
+            return offline_seed_response({
+                'status': 'error',
+                'message': 'Teacher college was not found.'
+            }, 404)
+        total_periods = int(college['total_periods'] or 6)
+
+        student_ids_by_roll = {student['roll_no']: student['id'] for student in students}
+        cursor.execute(
+            'SELECT student_roll, attendance_date, period_no, status '
+            'FROM attendance WHERE college_id = %s ORDER BY attendance_date, period_no',
+            (college_id,)
+        )
+        attendance_records = [
+            {
+                'student_id': student_ids_by_roll[row['student_roll']],
+                'roll_no': row['student_roll'],
+                'date': str(row['attendance_date']),
+                'period': int(row['period_no']),
+                'status': row['status'] or ''
+            }
+            for row in cursor.fetchall()
+            if row['student_roll'] in student_ids_by_roll
+        ]
+
+        class_map = {}
+        for student in students:
+            program = student['program']
+            part = student['part']
+            class_key = (program, part)
+            if class_key not in class_map:
+                class_map[class_key] = {
+                    'program': program,
+                    'part': part,
+                    'students': []
+                }
+            class_map[class_key]['students'].append({
+                'id': student['id'],
+                'roll_no': student['roll_no'],
+                'student_name': student['student_name'],
+                'father_name': student['father_name'] or ''
+            })
+
+        programs = {}
+        for class_data in class_map.values():
+            programs.setdefault(class_data['program'], []).append(class_data['part'])
+
+        return offline_seed_response({
+            'status': 'success',
+            'college_id': college_id,
+            'generated_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            'periods': list(range(1, total_periods + 1)),
+            'programs': [
+                {
+                    'name': program,
+                    'parts': sorted(parts),
+                }
+                for program, parts in sorted(programs.items())
+            ],
+            'classes': list(class_map.values()),
+            'attendance': attendance_records
+        })
+    finally:
+        conn.close()
+
+
 @app.route('/teacher/dashboard')
 def teacher_dashboard():
     if 'role' not in session or session['role'] != 'teacher':

@@ -3,7 +3,7 @@ const CACHE_PREFIX = 'college-attendance-';
 const OFFLINE_URL = '/offline';
 const SYNC_TAG = 'sync-cukur-data';
 const DB_NAME = 'college-attendance-offline';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = 'pending';
 const ATTENDANCE_STORE = 'pending_attendance';
 const PROFILE_STORE = 'offlineProfiles';
@@ -241,6 +241,9 @@ function openQueueDatabase() {
       }
       if (!database.objectStoreNames.contains('snapshots')) {
         database.createObjectStore('snapshots', { keyPath: 'cacheKey' });
+      }
+      if (!database.objectStoreNames.contains('seedData')) {
+        database.createObjectStore('seedData', { keyPath: 'cacheKey' });
       }
       if (!database.objectStoreNames.contains(PROFILE_STORE)) {
         database.createObjectStore(PROFILE_STORE, { keyPath: 'profileKey' });

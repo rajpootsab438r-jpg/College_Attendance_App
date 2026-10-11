@@ -2,10 +2,11 @@
   'use strict';
 
   const DB_NAME = 'college-attendance-offline';
-  const DB_VERSION = 4;
+  const DB_VERSION = 5;
   const STORE_NAME = 'pending';
   const ATTENDANCE_STORE = 'pending_attendance';
   const SNAPSHOT_STORE = 'snapshots';
+  const SEED_STORE = 'seedData';
   const PROFILE_STORE = 'offlineProfiles';
   const OFFLINE_SESSION_STORE = 'offlineSessions';
   const SYNC_TAG = 'sync-cukur-data';
@@ -31,6 +32,9 @@
           }
           if (!database.objectStoreNames.contains(SNAPSHOT_STORE)) {
             database.createObjectStore(SNAPSHOT_STORE, { keyPath: 'cacheKey' });
+          }
+          if (!database.objectStoreNames.contains(SEED_STORE)) {
+            database.createObjectStore(SEED_STORE, { keyPath: 'cacheKey' });
           }
           if (!database.objectStoreNames.contains(PROFILE_STORE)) {
             database.createObjectStore(PROFILE_STORE, { keyPath: 'profileKey' });
@@ -123,6 +127,109 @@
   async function getSnapshot(cacheKey) {
     const record = await readRecord(SNAPSHOT_STORE, cacheKey);
     return record ? record.data : null;
+  }
+
+  function seedCacheKey() {
+    const collegeId = document.body.dataset.offlineCollege;
+    if (!collegeId) {
+      throw new Error('Offline attendance data is not linked to a college.');
+    }
+    return `college-seed:${collegeId}`;
+  }
+
+  async function hydrateSeedData() {
+    const response = await fetch('/api/offline_seed_data', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Accept': 'application/json' }
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.status !== 'success' ||
+        !Array.isArray(payload.classes) || !Array.isArray(payload.periods) ||
+        !Array.isArray(payload.attendance)) {
+      throw new Error(payload.message || `Could not prepare offline class data (HTTP ${response.status}).`);
+    }
+    await storeRecord(SEED_STORE, {
+      cacheKey: seedCacheKey(),
+      data: payload,
+      savedAt: Date.now()
+    });
+    return payload;
+  }
+
+  async function getSeedData() {
+    const record = await readRecord(SEED_STORE, seedCacheKey());
+    return record ? record.data : null;
+  }
+
+  async function initializeSeedData() {
+    if (navigator.onLine) {
+      try {
+        return await hydrateSeedData();
+      } catch (error) {
+        console.warn('Could not refresh offline attendance data:', error);
+      }
+    }
+    return getSeedData();
+  }
+
+  async function getSeededStudents(program, part, date, period) {
+    const seed = await getSeedData();
+    if (!seed) return null;
+    const classData = seed.classes.find(item =>
+      item.program === program && item.part === part
+    );
+    if (!classData) return [];
+    const savedStatuses = new Map();
+    for (const record of seed.attendance) {
+      if (record.date === date && String(record.period) === String(period)) {
+        savedStatuses.set(String(record.student_id), record.status);
+      }
+    }
+    return classData.students.map(student => ({
+      ...student,
+      saved_status: savedStatuses.get(String(student.id)) || ''
+    }));
+  }
+
+  async function saveAttendanceLocally(attendance) {
+    const database = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(SEED_STORE, 'readwrite');
+      const store = transaction.objectStore(SEED_STORE);
+      const request = store.get(seedCacheKey());
+      request.onsuccess = () => {
+        const seedRecord = request.result;
+        if (!seedRecord) {
+          transaction.abort();
+          return;
+        }
+        const records = seedRecord.data.attendance;
+        const studentId = String(attendance.student_id);
+        const match = records.find(record =>
+          String(record.student_id) === studentId &&
+          record.date === attendance.date &&
+          String(record.period) === String(attendance.period)
+        );
+        const updatedRecord = {
+          student_id: attendance.student_id,
+          roll_no: attendance.roll,
+          date: attendance.date,
+          period: Number(attendance.period),
+          status: attendance.status
+        };
+        if (match) {
+          Object.assign(match, updatedRecord);
+        } else {
+          records.push(updatedRecord);
+        }
+        store.put(seedRecord);
+      };
+      request.onerror = () => reject(request.error || new Error('Could not update saved attendance.'));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not update saved attendance.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Attendance cache update was aborted.'));
+    });
   }
 
   async function deriveCredentialVerifier(password, salt) {
@@ -390,6 +497,11 @@
     requestSync,
     saveSnapshot,
     getSnapshot,
+    hydrateSeedData,
+    getSeedData,
+    initializeSeedData,
+    getSeededStudents,
+    saveAttendanceLocally,
     saveOfflineProfile,
     authorizeOfflineSession
   };

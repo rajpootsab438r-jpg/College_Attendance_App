@@ -86,6 +86,12 @@
             };
             if (!statusCell || !labels[targetStatus]) return;
 
+            const previousStatus = statusCell.innerHTML;
+            statusCell.textContent = '';
+            const badge = document.createElement('span');
+            badge.className = labels[targetStatus][0];
+            badge.textContent = labels[targetStatus][1];
+            statusCell.appendChild(badge);
             try {
                 const body = JSON.stringify({
                     roll: studentRoll,
@@ -101,17 +107,21 @@
                     'application/json',
                     'pending_attendance'
                 );
-                statusCell.textContent = '';
-                const badge = document.createElement('span');
-                badge.className = labels[targetStatus][0];
+                await window.OfflineSync.saveAttendanceLocally({
+                    student_id: studentId,
+                    roll: studentRoll,
+                    status: targetStatus,
+                    date: selectedDate,
+                    period: selectedPeriod
+                });
                 badge.textContent = labels[targetStatus][1] + (result.queued ? ' ⏳' : '');
-                statusCell.appendChild(badge);
                 if (result.queued) {
                     window.OfflineSync.updatePendingCount(
                         'Attendance saved on this device and will sync automatically when online.'
                     );
                 }
             } catch (error) {
+                statusCell.innerHTML = previousStatus;
                 window.OfflineSync.updatePendingCount(
                     error instanceof Error ? error.message : 'Attendance could not be saved.'
                 );
@@ -145,7 +155,7 @@
         }
     </script>
 </head>
-<body data-offline-actor="teacher:{{ session.get('user_id') }}">
+<body data-offline-actor="teacher:{{ session.get('user_id') }}" data-offline-college="{{ session.get('college_id') }}">
 
 <!-- ⚡ Top Custom Functional Purple Navigation Control Bar -->
 <div class="top-nav-bar">
@@ -368,6 +378,51 @@
       Vacation: ['badge-vacation', isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️']
     };
 
+    let offlineSeed = null;
+    function replaceOptions(select, placeholder, values, selectedValue) {
+      select.replaceChildren(new Option(placeholder, ''));
+      values.forEach(value => select.add(new Option(value, value)));
+      if (values.includes(selectedValue)) {
+        select.value = selectedValue;
+      } else {
+        select.value = '';
+      }
+    }
+
+    function populateParts(program, selectedPart) {
+      const programData = offlineSeed?.programs.find(item => item.name === program);
+      replaceOptions(
+        partSelect,
+        isUrdu ? '-- سمسٹر منتخب کریں --' : '-- Select Part / Semester --',
+        programData ? programData.parts : [],
+        selectedPart
+      );
+    }
+
+    function populateFilters(seed) {
+      offlineSeed = seed;
+      const selectedProgram = programSelect.value;
+      const selectedPart = partSelect.value;
+      replaceOptions(
+        programSelect,
+        isUrdu ? '-- پروگرام منتخب کریں --' : '-- Select Program --',
+        seed.programs.map(item => item.name),
+        selectedProgram
+      );
+      populateParts(programSelect.value, selectedPart);
+      const selectedPeriod = periodSelect.value;
+      periodSelect.replaceChildren();
+      seed.periods.forEach(period => {
+        const label = isUrdu ? `پیریڈ ${period}` : `Period ${period}`;
+        periodSelect.add(new Option(label, String(period)));
+      });
+      if (seed.periods.map(String).includes(selectedPeriod)) {
+        periodSelect.value = selectedPeriod;
+      } else if (seed.periods.length) {
+        periodSelect.value = String(seed.periods[0]);
+      }
+    }
+
     let refreshSequence = 0;
     async function refreshStudents() {
       const sequence = ++refreshSequence;
@@ -420,10 +475,19 @@
       }
 
       try {
+        const seededStudents = await window.OfflineSync.getSeededStudents(
+          program, part, date, period
+        );
+        if (sequence !== refreshSequence) return;
+        if (seededStudents !== null) {
+          renderStudents(seededStudents);
+          message.textContent = 'Showing attendance data saved on this device.';
+          return;
+        }
         const students = await window.OfflineSync.getSnapshot(key);
         if (sequence !== refreshSequence) return;
         if (students === null || students === undefined) {
-          const errorMessage = 'This class/date/period has not been saved for offline use. Connect and open it once first.';
+          const errorMessage = 'Offline class data is not available on this device. Connect and sign in online to prepare it.';
           message.textContent = errorMessage;
           renderFallback(errorMessage);
           return;
@@ -445,6 +509,9 @@
       return;
     }
 
+    programSelect.addEventListener('change', () => {
+      populateParts(programSelect.value, '');
+    });
     [programSelect, partSelect, dateInput, periodSelect].forEach(control => {
       control.addEventListener('change', event => {
         event.preventDefault();
@@ -464,6 +531,15 @@
         message.textContent = error instanceof Error ? error.message : 'Could not save this attendance list for offline use.';
       });
     }
+    window.OfflineSync.initializeSeedData().then(seed => {
+      if (!seed) return;
+      populateFilters(seed);
+      if (!navigator.onLine) refreshStudents();
+    }).catch(error => {
+      message.textContent = error instanceof Error
+        ? error.message
+        : 'Could not prepare offline class data.';
+    });
   })();
 
   window.addEventListener('load', () => {
