@@ -2,9 +2,14 @@
   'use strict';
 
   const DB_NAME = 'college-attendance-offline';
-  const DB_VERSION = 1;
+  const DB_VERSION = 4;
   const STORE_NAME = 'pending';
+  const ATTENDANCE_STORE = 'pending_attendance';
+  const SNAPSHOT_STORE = 'snapshots';
+  const PROFILE_STORE = 'offlineProfiles';
+  const OFFLINE_SESSION_STORE = 'offlineSessions';
   const SYNC_TAG = 'sync-cukur-data';
+  const OFFLINE_PROFILE_MAX_AGE = 24 * 60 * 60 * 1000;
   const QUEUE_PATHS = new Set([
     '/teacher/quick_attendance',
     '/admin/dashboard',
@@ -24,8 +29,26 @@
           if (!database.objectStoreNames.contains(STORE_NAME)) {
             database.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
           }
+          if (!database.objectStoreNames.contains(SNAPSHOT_STORE)) {
+            database.createObjectStore(SNAPSHOT_STORE, { keyPath: 'cacheKey' });
+          }
+          if (!database.objectStoreNames.contains(PROFILE_STORE)) {
+            database.createObjectStore(PROFILE_STORE, { keyPath: 'profileKey' });
+          }
+          if (!database.objectStoreNames.contains(ATTENDANCE_STORE)) {
+            database.createObjectStore(ATTENDANCE_STORE, { keyPath: 'id', autoIncrement: true });
+          }
+          if (!database.objectStoreNames.contains(OFFLINE_SESSION_STORE)) {
+            database.createObjectStore(OFFLINE_SESSION_STORE, { keyPath: 'sessionKey' });
+          }
         };
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+          request.result.onversionchange = () => {
+            request.result.close();
+            databasePromise = null;
+          };
+          resolve(request.result);
+        };
         request.onerror = () => reject(request.error || new Error('Could not open offline storage.'));
       });
     }
@@ -58,14 +81,121 @@
   async function countPending() {
     const database = await openDatabase();
     return new Promise((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readonly');
-      const request = transaction.objectStore(STORE_NAME).count();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('Could not read pending changes.'));
+      const transaction = database.transaction([STORE_NAME, ATTENDANCE_STORE], 'readonly');
+      let total = 0;
+      for (const storeName of [STORE_NAME, ATTENDANCE_STORE]) {
+        const request = transaction.objectStore(storeName).count();
+        request.onsuccess = () => {
+          total += request.result;
+        };
+        request.onerror = () => reject(request.error || new Error('Could not read pending changes.'));
+      }
+      transaction.oncomplete = () => resolve(total);
+      transaction.onerror = () => reject(transaction.error || new Error('Could not read pending changes.'));
     });
   }
 
+  async function storeRecord(storeName, record) {
+    const database = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(storeName, 'readwrite');
+      transaction.objectStore(storeName).put(record);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not save offline data.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Offline data save was aborted.'));
+    });
+  }
+
+  async function readRecord(storeName, key) {
+    const database = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(storeName, 'readonly');
+      const request = transaction.objectStore(storeName).get(key);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error('Could not read offline data.'));
+    });
+  }
+
+  async function saveSnapshot(cacheKey, data) {
+    await storeRecord(SNAPSHOT_STORE, { cacheKey, data, savedAt: Date.now() });
+  }
+
+  async function getSnapshot(cacheKey) {
+    const record = await readRecord(SNAPSHOT_STORE, cacheKey);
+    return record ? record.data : null;
+  }
+
+  async function deriveCredentialVerifier(password, salt) {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(password),
+      'PBKDF2',
+      false,
+      ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits({
+      name: 'PBKDF2',
+      salt,
+      iterations: 310000,
+      hash: 'SHA-256'
+    }, key, 256);
+    return Array.from(new Uint8Array(bits), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function saveOfflineProfile(role, username, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const verifier = await deriveCredentialVerifier(password, salt);
+    const profileKey = `offline-profile:${role}:${username}`;
+    const authenticatedAt = Date.now();
+    await storeRecord(PROFILE_STORE, {
+      profileKey,
+      role,
+      username,
+      salt: Array.from(salt),
+      verifier,
+      session: { role, username, offlineViewOnly: true, authenticatedAt },
+      expiresAt: authenticatedAt + OFFLINE_PROFILE_MAX_AGE
+    });
+  }
+
+  async function verifyOfflineProfile(role, username, password) {
+    const profileKey = `offline-profile:${role}:${username}`;
+    const profile = await readRecord(PROFILE_STORE, profileKey);
+    if (!profile || profile.role !== role || profile.username !== username ||
+        profile.session?.role !== role || profile.session?.username !== username ||
+        profile.session?.offlineViewOnly !== true ||
+        profile.expiresAt <= Date.now()) {
+      return false;
+    }
+    const actual = await deriveCredentialVerifier(password, new Uint8Array(profile.salt));
+    return actual === profile.verifier;
+  }
+
+  async function authorizeOfflineSession(role, username, password) {
+    if (!await verifyOfflineProfile(role, username, password)) {
+      return false;
+    }
+    if (!['admin', 'teacher', 'developer'].includes(role)) {
+      throw new Error('Unsupported offline account role.');
+    }
+    const profile = await readRecord(PROFILE_STORE, `offline-profile:${role}:${username}`);
+    if (!profile || profile.role !== role || profile.username !== username ||
+        profile.expiresAt <= Date.now()) {
+      throw new Error('Offline sign-in data is missing or expired.');
+    }
+    await storeRecord(OFFLINE_SESSION_STORE, {
+      sessionKey: 'active',
+      role,
+      username,
+      expiresAt: profile.expiresAt
+    });
+    return true;
+  }
+
   async function enqueue(url, body, contentType, tag, operationId) {
+    if (sessionStorage.getItem('offline-view-only') === 'true' && tag !== 'pending_attendance') {
+      throw new Error('Offline sign-in only allows attendance to be queued. Connect and sign in online before changing other records.');
+    }
     const actor = document.body.dataset.offlineActor;
     if (!actor) {
       throw new Error('Offline sync identity is not configured for this page.');
@@ -76,6 +206,7 @@
     }
 
     const database = await openDatabase();
+    const storeName = tag === 'pending_attendance' ? ATTENDANCE_STORE : STORE_NAME;
     const entry = {
       url: path,
       method: 'POST',
@@ -87,8 +218,8 @@
       createdAt: new Date().toISOString()
     };
     const id = await new Promise((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readwrite');
-      const request = transaction.objectStore(STORE_NAME).add(entry);
+      const transaction = database.transaction(storeName, 'readwrite');
+      const request = transaction.objectStore(storeName).add(entry);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('Could not save the offline change.'));
     });
@@ -111,6 +242,10 @@
   }
 
   async function sendOrQueue(url, body, contentType, tag) {
+    const offlineViewOnly = sessionStorage.getItem('offline-view-only') === 'true';
+    if (offlineViewOnly && tag !== 'pending_attendance') {
+      throw new Error('Offline sign-in only allows attendance to be queued. Connect and sign in online before changing other records.');
+    }
     const actor = document.body.dataset.offlineActor;
     if (!actor) {
       throw new Error('Offline sync identity is not configured for this page.');
@@ -120,6 +255,9 @@
       throw new Error('This action cannot be sent or queued for offline synchronization.');
     }
     const operationId = createOperationId();
+    if (offlineViewOnly) {
+      return { queued: true, id: await enqueue(path, body, contentType, tag, operationId) };
+    }
     if (!navigator.onLine) {
       return { queued: true, id: await enqueue(path, body, contentType, tag, operationId) };
     }
@@ -249,8 +387,23 @@
     enqueue,
     sendOrQueue,
     updatePendingCount,
-    requestSync
+    requestSync,
+    saveSnapshot,
+    getSnapshot,
+    saveOfflineProfile,
+    authorizeOfflineSession
   };
+
+  if (sessionStorage.getItem('offline-view-only') === 'true') {
+    const notice = document.createElement('div');
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    notice.textContent = document.body.dataset.offlineActor?.startsWith('teacher:')
+      ? 'Offline session: attendance is saved on this device; other changes require online sign-in.'
+      : 'Offline viewing mode: changes cannot be saved until you sign in online.';
+    notice.style.cssText = 'position:sticky;top:0;z-index:10002;padding:10px 14px;margin-bottom:12px;border-radius:6px;background:#cff4fc;color:#055160;font-weight:600;';
+    document.body.prepend(notice);
+  }
 
   if (document.body.dataset.offlineQueueForms === 'true') {
     installFormQueue();

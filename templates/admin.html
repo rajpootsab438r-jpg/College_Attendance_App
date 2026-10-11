@@ -316,28 +316,27 @@
     <h3>📋 {% if current_lang == 'ur' %}رجسٹرڈ طلباء کی لسٹ اور فلٹرز{% else %}Registered Students List & Filters{% endif %}</h3> 
     
     <form id="admin-filter-form" method="GET" action="/admin/dashboard" class="filter-form-bar">
-        <select name="program" onchange="document.getElementById('admin-filter-form').submit()"> 
+        <select name="program" id="admin-filter-program">
             <option value="">-- All Programs --</option> 
             <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option><option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option><option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option><option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option><option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option><option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option><option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option><option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option><option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option><option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option><option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option> 
         </select> 
-        <select name="part" onchange="document.getElementById('admin-filter-form').submit()"> 
+        <select name="part" id="admin-filter-part">
             <option value="">-- All Parts/Semesters --</option> 
             <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option><option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option><option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option><option value="Semester-2" {% if selected_part == 'Semester-2' %}selected{% endif %}>Semester-2</option><option value="Semester-3" {% if selected_part == 'Semester-3' %}selected{% endif %}>Semester-3</option><option value="Semester-4" {% if selected_part == 'Semester-4' %}selected{% endif %}>Semester-4</option><option value="Semester-5" {% if selected_part == 'Semester-5' %}selected{% endif %}>Semester-5</option><option value="Semester-6" {% if selected_part == 'Semester-6' %}selected{% endif %}>Semester-6</option><option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option><option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option> 
         </select> 
         {% if selected_program or selected_part %}
-            <a href="/admin/dashboard" style="background:#dc3545; color:white; padding:10px 18px; border-radius:6px; font-weight:bold; text-decoration:none; font-size:14px; display:inline-block;">Clear Filter ❌</a>
+            <button type="button" id="admin-clear-filter" style="background:#dc3545; color:white; padding:10px 18px; border-radius:6px; font-weight:bold; font-size:14px; display:inline-block;">Clear Filter ❌</button>
         {% endif %}
     </form>
 
-    {% if selected_program or selected_part %}
-    <div class="info-bar">📍 Current Filter Active: {{ selected_program }} ({{ selected_part }})</div>
-    {% endif %}
+    <div class="info-bar" id="admin-filter-status" {% if not selected_program and not selected_part %}hidden{% endif %}>📍 Current Filter Active: {{ selected_program }} ({{ selected_part }})</div>
+    <p id="admin-filter-message" role="status" aria-live="polite"></p>
 
     <table> 
         <thead> 
             <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Attendance Status (%)</th><th>Actions</th></tr> 
         </thead> 
-        <tbody> 
+        <tbody id="admin-students-body">
             {% for student in students %} 
             <tr> 
                 <td><b>{{ student.roll_no }}</b></td> 
@@ -359,6 +358,129 @@
         </tbody> 
     </table>
 </div>
+<script>
+  (function() {
+    const form = document.getElementById('admin-filter-form');
+    const programSelect = document.getElementById('admin-filter-program');
+    const partSelect = document.getElementById('admin-filter-part');
+    const tableBody = document.getElementById('admin-students-body');
+    const filterStatus = document.getElementById('admin-filter-status');
+    const message = document.getElementById('admin-filter-message');
+    const actor = document.body.dataset.offlineActor;
+    if (!form || !programSelect || !partSelect || !tableBody || !window.OfflineSync) return;
+
+    function snapshotKey(program, part) {
+      return `admin-students:${actor}:${program}:${part}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[character]);
+    }
+
+    function renderStudents(students) {
+      tableBody.innerHTML = students.map(student => {
+        const id = escapeHtml(student.id);
+        const studentName = escapeHtml(student.student_name);
+        const roll = escapeHtml(student.roll_no);
+        return `<tr>
+          <td><b>${roll}</b></td>
+          <td>${studentName}</td>
+          <td>${escapeHtml(student.father_name)}</td>
+          <td>${escapeHtml(student.phone_number || '-')}</td>
+          <td>${escapeHtml(student.program)}</td>
+          <td>${escapeHtml(student.part)}</td>
+          <td style="color:#198754;font-weight:bold;">${escapeHtml(student.percentage)}%
+            <a href="/admin/download_student_report/${encodeURIComponent(student.id)}" target="_blank" style="margin-left:8px;background:#198754;color:white;padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;display:inline-block;">PDF 📄</a>
+          </td>
+          <td><div style="display:flex;gap:8px;align-items:center;">
+            <a href="/admin/dashboard?edit_s=${encodeURIComponent(student.id)}" style="background:#007bff;color:white;padding:6px 12px;border-radius:4px;font-weight:bold;font-size:13px;text-decoration:none;display:inline-block;">📝</a>
+            <form method="POST" action="/admin/dashboard" style="display:inline;margin:0;" onsubmit="return confirm('Delete Student?')">
+              <input type="hidden" name="action" value="delete_student">
+              <input type="hidden" name="id" value="${id}">
+              <button type="submit" class="del-btn">❌</button>
+            </form>
+          </div></td>
+        </tr>`;
+      }).join('');
+    }
+
+    function updateFilterLabel(program, part) {
+      filterStatus.hidden = !program && !part;
+      filterStatus.textContent = program || part
+        ? `📍 Current Filter Active: ${program} (${part})`
+        : '';
+    }
+
+    let refreshSequence = 0;
+    async function refreshStudents() {
+      const sequence = ++refreshSequence;
+      const program = programSelect.value;
+      const part = partSelect.value;
+      const key = snapshotKey(program, part);
+      message.textContent = '';
+      updateFilterLabel(program, part);
+
+      if (navigator.onLine) {
+        try {
+          const query = new URLSearchParams({ format: 'json', program, part });
+          const response = await fetch(`/admin/dashboard?${query}`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+          });
+          const result = await response.json();
+          if (!response.ok || !Array.isArray(result.students)) {
+            throw new Error(result.message || `Could not load students (HTTP ${response.status}).`);
+          }
+          if (sequence !== refreshSequence) return;
+          renderStudents(result.students);
+          await window.OfflineSync.saveSnapshot(key, result.students);
+          return;
+        } catch (error) {
+          if (navigator.onLine && !(error instanceof TypeError)) {
+            message.textContent = error.message;
+            return;
+          }
+        }
+      }
+
+      try {
+        const students = await window.OfflineSync.getSnapshot(key);
+        if (sequence !== refreshSequence) return;
+        if (!Array.isArray(students)) {
+          message.textContent = 'This student filter has not been saved for offline use. Connect and open this filter once first.';
+          renderStudents([]);
+          return;
+        }
+        renderStudents(students);
+        message.textContent = 'Showing the last saved student list (offline).';
+      } catch (error) {
+        if (sequence !== refreshSequence) return;
+        message.textContent = error instanceof Error ? error.message : 'Could not read the saved student list.';
+      }
+    }
+
+    [programSelect, partSelect].forEach(select => {
+      select.addEventListener('change', event => {
+        event.preventDefault();
+        refreshStudents();
+      });
+    });
+    document.getElementById('admin-clear-filter')?.addEventListener('click', () => {
+      programSelect.value = '';
+      partSelect.value = '';
+      refreshStudents();
+    });
+    form.addEventListener('submit', event => event.preventDefault());
+
+    const initialStudents = {{ students|tojson }};
+    window.OfflineSync.saveSnapshot(snapshotKey(programSelect.value, partSelect.value), initialStudents)
+      .catch(error => {
+        message.textContent = error instanceof Error ? error.message : 'Could not save this student list for offline use.';
+      });
+  })();
+</script>
 <script>
   document.getElementById('scan-students-button').addEventListener('click', async function() {
     const file = document.getElementById('student-scan-image').files[0];

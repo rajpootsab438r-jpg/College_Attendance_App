@@ -73,7 +73,7 @@
         
     </style>
     <script>
-        async function markInstantAttendance(studentRoll, targetStatus) {
+        async function markInstantAttendance(studentRoll, targetStatus, studentId) {
             var selectedDate = document.getElementById('global_date').value;
             var selectedPeriod = document.getElementById('global_period').value;
             const statusCell = document.getElementById('status-box-' + studentRoll);
@@ -89,9 +89,11 @@
             try {
                 const body = JSON.stringify({
                     roll: studentRoll,
+                    student_id: studentId,
                     status: targetStatus,
                     date: selectedDate,
-                    period: selectedPeriod
+                    period: selectedPeriod,
+                    marked_at: new Date().toISOString()
                 });
                 const result = await window.OfflineSync.sendOrQueue(
                     '/teacher/quick_attendance',
@@ -172,7 +174,7 @@
         
         <!-- ⚡ FIXED AUTO-LOAD LISTENER: Trigger forms submit on fields changes events -->
         <form id="attendance-setup-form" method="GET" action="/teacher/dashboard" class="setup-form">
-            <select name="program" onchange="document.getElementById('attendance-setup-form').submit()" required>
+            <select name="program" id="attendance-program" required>
                 <option value="">{% if current_lang == 'ur' %}-- پروگرام منتخب کریں --{% else %}-- Select Program --{% endif %}</option>
                 <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option>
                 <option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option>
@@ -187,7 +189,7 @@
                 <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option>
             </select>
 
-            <select name="part" onchange="document.getElementById('attendance-setup-form').submit()" required>
+            <select name="part" id="attendance-part" required>
                 <option value="">{% if current_lang == 'ur' %}-- سمسٹر منتخب کریں --{% else %}-- Select Part / Semester --{% endif %}</option>
                 <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option>
                 <option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option>
@@ -201,22 +203,22 @@
                 <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option>
             </select>
             
-            <input type="date" id="global_date" name="attendance_date" value="{{ selected_date }}" onchange="document.getElementById('attendance-setup-form').submit()" required>
+            <input type="date" id="global_date" name="attendance_date" value="{{ selected_date }}" required>
             
-            <select name="period_no" id="global_period" onchange="document.getElementById('attendance-setup-form').submit()" required>
+            <select name="period_no" id="global_period" required>
                 {% for p in range(1, total_periods + 1) %}
                     <option value="{{ p }}" {% if selected_period == p|string %}selected{% endif %}>{% if current_lang == 'ur' %}پیریڈ {{ p }}{% else %}Period {{ p }}{% endif %}</option>
                 {% endfor %}
             </select>
         </form>
     </div>
-    {% if students %}
-    <div class="card" style="overflow-x: auto;">
-        <div class="info-bar">
+    <div class="card" id="attendance-results" style="overflow-x: auto;" {% if not selected_program or not selected_part %}hidden{% endif %}>
+        <div class="info-bar" id="attendance-filter-status">
             {% if current_lang == 'ur' %}📍 منتخب کلاس: {{ selected_program }} ({{ selected_part }}) | 📅 تاریخ: {{ selected_date }} | ⏱️ پیریڈ: {{ selected_period }}{% else %}📍 Selected: {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }} | ⏱️ Period: {{ selected_period }}{% endif %}
         </div>
+        <p id="attendance-filter-message" role="status" aria-live="polite"></p>
         
-        <table>
+        <table id="attendance-table" {% if not students %}hidden{% endif %}>
             <thead>
                 <tr>
                     <th>{% if current_lang == 'ur' %}رول نمبر{% else %}Roll No{% endif %}</th>
@@ -226,7 +228,7 @@
                     <th>{% if current_lang == 'ur' %}حاضری کے بٹن{% else %}Actions{% endif %}</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="attendance-students-body">
                 {% for student in students %}
                 <tr>
                     <td><b>{{ student.roll_no }}</b></td>
@@ -246,23 +248,163 @@
                     <td>
                         <!-- ⚡ UPDATED 4 ACTION STATE INTERFACE SELECTORS MATRIX BUTTONS -->
                         <div class="action-container">
-                            <button type="button" class="btn-action-p" onclick="markInstantAttendance('{{ student.roll_no }}', 'Present')">{% if current_lang == 'ur' %}حاضر{% else %}Present{% endif %}</button>
-                            <button type="button" class="btn-action-a" onclick="markInstantAttendance('{{ student.roll_no }}', 'Absent')">{% if current_lang == 'ur' %}غیر حاضر{% else %}Absent{% endif %}</button>
-                            <button type="button" class="btn-action-l" onclick="markInstantAttendance('{{ student.roll_no }}', 'Leave')">{% if current_lang == 'ur' %}رخصت{% else %}Leave{% endif %}</button>
-                            <button type="button" class="btn-action-v" onclick="markInstantAttendance('{{ student.roll_no }}', 'Vacation')">{% if current_lang == 'ur' %}تعطیل{% else %}Vacation{% endif %}</button>
+                            <button type="button" name="status" value="Present" data-student-id="{{ student.id }}" data-roll="{{ student.roll_no }}" data-status="Present" class="btn-action-p">{% if current_lang == 'ur' %}حاضر{% else %}Present{% endif %}</button>
+                            <button type="button" name="status" value="Absent" data-student-id="{{ student.id }}" data-roll="{{ student.roll_no }}" data-status="Absent" class="btn-action-a">{% if current_lang == 'ur' %}غیر حاضر{% else %}Absent{% endif %}</button>
+                            <button type="button" name="status" value="Leave" data-student-id="{{ student.id }}" data-roll="{{ student.roll_no }}" data-status="Leave" class="btn-action-l">{% if current_lang == 'ur' %}رخصت{% else %}Leave{% endif %}</button>
+                            <button type="button" name="status" value="Vacation" data-student-id="{{ student.id }}" data-roll="{{ student.roll_no }}" data-status="Vacation" class="btn-action-v">{% if current_lang == 'ur' %}تعطیل{% else %}Vacation{% endif %}</button>
                         </div>
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        <div id="attendance-empty" class="card" style="text-align:center;color:#dc3545;font-weight:bold;padding:30px;" {% if students or not selected_program or not selected_part %}hidden{% endif %}>
+            {% if current_lang == 'ur' %}⚠️ اس کلاس میں کوئی طالب علم موجود نہیں ہے!{% else %}⚠️ No student found in this class!{% endif %}
+        </div>
     </div>
-    {% elif selected_program and selected_part %}
-    <div class="card" style="text-align: center; color: #dc3545; font-weight: bold; padding: 30px;">
-        {% if current_lang == 'ur' %}⚠️ اس کلاس میں کوئی طالب علم موجود نہیں ہے!{% else %}⚠️ No student found in this class!{% endif %}
-    </div>
-    {% endif %}
 <script>
+  (function() {
+    const form = document.getElementById('attendance-setup-form');
+    const programSelect = document.getElementById('attendance-program');
+    const partSelect = document.getElementById('attendance-part');
+    const dateInput = document.getElementById('global_date');
+    const periodSelect = document.getElementById('global_period');
+    const results = document.getElementById('attendance-results');
+    const table = document.getElementById('attendance-table');
+    const tableBody = document.getElementById('attendance-students-body');
+    const emptyState = document.getElementById('attendance-empty');
+    const filterStatus = document.getElementById('attendance-filter-status');
+    const message = document.getElementById('attendance-filter-message');
+    const actor = document.body.dataset.offlineActor;
+    const isUrdu = "{{ 'true' if current_lang == 'ur' else 'false' }}" === 'true';
+    if (!form || !window.OfflineSync) return;
+
+    function snapshotKey() {
+      return `teacher-attendance:${actor}:${programSelect.value}:${partSelect.value}:${dateInput.value}:${periodSelect.value}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[character]);
+    }
+
+    function renderStudents(students) {
+      const statusLabels = {
+        Present: ['badge-present', isUrdu ? 'حاضر ✅' : 'Present ✅'],
+        Absent: ['badge-absent', isUrdu ? 'غیر حاضر ❌' : 'Absent ❌'],
+        Leave: ['badge-leave', isUrdu ? 'رخصت 📝' : 'Leave 📝'],
+        Vacation: ['badge-vacation', isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️']
+      };
+      tableBody.innerHTML = students.map(student => {
+        const studentId = escapeHtml(student.id);
+        const roll = escapeHtml(student.roll_no);
+        const savedStatus = statusLabels[student.saved_status];
+        const badge = savedStatus
+          ? `<span class="${savedStatus[0]}">${savedStatus[1]}</span>`
+          : '';
+        return `<tr>
+          <td><b>${roll}</b></td>
+          <td>${escapeHtml(student.student_name)}</td>
+          <td>${escapeHtml(student.father_name)}</td>
+          <td id="status-box-${roll}">${badge}</td>
+          <td><div class="action-container">
+            <button type="button" name="status" value="Present" data-student-id="${studentId}" data-roll="${roll}" data-status="Present" class="btn-action-p">${isUrdu ? 'حاضر' : 'Present'}</button>
+            <button type="button" name="status" value="Absent" data-student-id="${studentId}" data-roll="${roll}" data-status="Absent" class="btn-action-a">${isUrdu ? 'غیر حاضر' : 'Absent'}</button>
+            <button type="button" name="status" value="Leave" data-student-id="${studentId}" data-roll="${roll}" data-status="Leave" class="btn-action-l">${isUrdu ? 'رخصت' : 'Leave'}</button>
+            <button type="button" name="status" value="Vacation" data-student-id="${studentId}" data-roll="${roll}" data-status="Vacation" class="btn-action-v">${isUrdu ? 'تعطیل' : 'Vacation'}</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+      table.hidden = students.length === 0;
+      emptyState.hidden = students.length !== 0 || !programSelect.value || !partSelect.value;
+    }
+
+    let refreshSequence = 0;
+    async function refreshStudents() {
+      const sequence = ++refreshSequence;
+      const program = programSelect.value;
+      const part = partSelect.value;
+      const date = dateInput.value;
+      const period = periodSelect.value;
+      results.hidden = !program || !part;
+      filterStatus.textContent = isUrdu
+        ? `📍 منتخب کلاس: ${program} (${part}) | 📅 تاریخ: ${date} | ⏱️ پیریڈ: ${period}`
+        : `📍 Selected: ${program} (${part}) | 📅 Date: ${date} | ⏱️ Period: ${period}`;
+      message.textContent = '';
+      if (!program || !part) {
+        tableBody.innerHTML = '';
+        table.hidden = true;
+        emptyState.hidden = true;
+        return;
+      }
+
+      const key = snapshotKey();
+      if (navigator.onLine) {
+        try {
+          const query = new URLSearchParams({
+            format: 'json',
+            program,
+            part,
+            attendance_date: date,
+            period_no: period
+          });
+          const response = await fetch(`/teacher/dashboard?${query}`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+          });
+          const result = await response.json();
+          if (!response.ok || !Array.isArray(result.students)) {
+            throw new Error(result.message || `Could not load attendance (HTTP ${response.status}).`);
+          }
+          if (sequence !== refreshSequence) return;
+          renderStudents(result.students);
+          await window.OfflineSync.saveSnapshot(key, result.students);
+          return;
+        } catch (error) {
+          if (navigator.onLine && !(error instanceof TypeError)) {
+            message.textContent = error.message;
+            return;
+          }
+        }
+      }
+
+      try {
+        const students = await window.OfflineSync.getSnapshot(key);
+        if (sequence !== refreshSequence) return;
+        if (!Array.isArray(students)) {
+          message.textContent = 'This class/date/period has not been saved for offline use. Connect and open it once first.';
+          renderStudents([]);
+          return;
+        }
+        renderStudents(students);
+        message.textContent = 'Showing the last saved attendance list (offline).';
+      } catch (error) {
+        if (sequence !== refreshSequence) return;
+        message.textContent = error instanceof Error ? error.message : 'Could not read the saved attendance list.';
+      }
+    }
+
+    [programSelect, partSelect, dateInput, periodSelect].forEach(control => {
+      control.addEventListener('change', event => {
+        event.preventDefault();
+        refreshStudents();
+      });
+    });
+    form.addEventListener('submit', event => event.preventDefault());
+    tableBody.addEventListener('click', event => {
+      const button = event.target.closest('button[data-roll][data-status]');
+      if (button) markInstantAttendance(button.dataset.roll, button.dataset.status, button.dataset.studentId);
+    });
+
+    const initialStudents = {{ students|tojson }};
+    if (programSelect.value && partSelect.value) {
+      window.OfflineSync.saveSnapshot(snapshotKey(), initialStudents).catch(error => {
+        message.textContent = error instanceof Error ? error.message : 'Could not save this attendance list for offline use.';
+      });
+    }
+  })();
+
   window.addEventListener('load', () => {
     window.OfflineSync?.requestSync();
   });

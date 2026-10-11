@@ -1,10 +1,13 @@
-const CACHE_NAME = 'college-attendance-v6';
+const CACHE_NAME = 'college-attendance-v8';
 const CACHE_PREFIX = 'college-attendance-';
 const OFFLINE_URL = '/offline';
 const SYNC_TAG = 'sync-cukur-data';
 const DB_NAME = 'college-attendance-offline';
-const DB_VERSION = 1;
+const DB_VERSION = 4;
 const STORE_NAME = 'pending';
+const ATTENDANCE_STORE = 'pending_attendance';
+const PROFILE_STORE = 'offlineProfiles';
+const OFFLINE_SESSION_STORE = 'offlineSessions';
 const APP_PATHS = new Set([
   '/',
   '/login/admin',
@@ -14,6 +17,11 @@ const APP_PATHS = new Set([
   '/developer/dashboard',
   '/teacher/dashboard'
 ]);
+const DASHBOARD_ROLES = new Map([
+  ['/admin/dashboard', 'admin'],
+  ['/teacher/dashboard', 'teacher'],
+  ['/developer/dashboard', 'developer']
+]);
 const PRECACHE_URLS = [
   '/',
   '/offline',
@@ -21,6 +29,7 @@ const PRECACHE_URLS = [
   '/login/admin',
   '/login/teacher',
   '/login/developer',
+  '/static/offline-login.js',
   '/static/offline-sync.js',
   '/static/icon.svg'
 ];
@@ -59,10 +68,23 @@ self.addEventListener('fetch', (event) => {
 
   if (url.pathname === '/logout') {
     event.respondWith((async () => {
+      if (self.navigator.onLine === false) {
+        await clearPrivatePages();
+        await clearOfflineProfiles();
+        return Response.redirect('/', 303);
+      }
       const response = await fetch(request);
-      await clearPrivatePages();
+      if (response.ok) {
+        await clearPrivatePages();
+        await clearOfflineProfiles();
+      }
       return response;
     })());
+    return;
+  }
+
+  if (request.mode === 'navigate' && DASHBOARD_ROLES.has(url.pathname)) {
+    event.respondWith(serveDashboard(request, DASHBOARD_ROLES.get(url.pathname)));
     return;
   }
 
@@ -98,6 +120,41 @@ async function staleWhileRevalidate(request) {
   } catch (error) {
     console.warn('Page is unavailable online; serving offline fallback:', error);
     return (await cache.match(OFFLINE_URL)) || unavailableResponse();
+  }
+}
+
+async function serveDashboard(request, role) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request);
+    const responseUrl = new URL(response.url || request.url);
+    if (response.ok && responseUrl.pathname === new URL(request.url).pathname &&
+        response.headers.get('content-type')?.includes('text/html')) {
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    console.warn('Dashboard is unavailable online; checking the offline session:', error);
+    if (!await hasActiveOfflineSession(role)) {
+      return Response.redirect(new URL(`/login/${role}`, self.location.origin), 303);
+    }
+    const cached = await findCachedPage(cache, request);
+    return cached || Response.redirect(new URL(`/login/${role}`, self.location.origin), 303);
+  }
+}
+
+async function hasActiveOfflineSession(role) {
+  const database = await openQueueDatabase();
+  try {
+    const session = await new Promise((resolve, reject) => {
+      const transaction = database.transaction(OFFLINE_SESSION_STORE, 'readonly');
+      const request = transaction.objectStore(OFFLINE_SESSION_STORE).get('active');
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error('Could not validate offline session.'));
+    });
+    return session?.role === role && session.expiresAt > Date.now();
+  } finally {
+    database.close();
   }
 }
 
@@ -158,6 +215,22 @@ async function clearPrivatePages() {
   }));
 }
 
+async function clearOfflineProfiles() {
+  const database = await openQueueDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction([PROFILE_STORE, OFFLINE_SESSION_STORE], 'readwrite');
+      transaction.objectStore(PROFILE_STORE).clear();
+      transaction.objectStore(OFFLINE_SESSION_STORE).clear();
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not clear offline sign-in data.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Offline sign-in cleanup was aborted.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 function openQueueDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -165,6 +238,18 @@ function openQueueDatabase() {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         database.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+      }
+      if (!database.objectStoreNames.contains('snapshots')) {
+        database.createObjectStore('snapshots', { keyPath: 'cacheKey' });
+      }
+      if (!database.objectStoreNames.contains(PROFILE_STORE)) {
+        database.createObjectStore(PROFILE_STORE, { keyPath: 'profileKey' });
+      }
+      if (!database.objectStoreNames.contains(ATTENDANCE_STORE)) {
+        database.createObjectStore(ATTENDANCE_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+      if (!database.objectStoreNames.contains(OFFLINE_SESSION_STORE)) {
+        database.createObjectStore(OFFLINE_SESSION_STORE, { keyPath: 'sessionKey' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -174,17 +259,27 @@ function openQueueDatabase() {
 
 function readPendingOperations(database) {
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, 'readonly');
-    const request = transaction.objectStore(STORE_NAME).getAll();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('Could not read offline queue.'));
+    const transaction = database.transaction([STORE_NAME, ATTENDANCE_STORE], 'readonly');
+    const results = {};
+    for (const storeName of [STORE_NAME, ATTENDANCE_STORE]) {
+      const request = transaction.objectStore(storeName).getAll();
+      request.onsuccess = () => {
+        results[storeName] = request.result.map((operation) => ({ ...operation, storeName }));
+      };
+      request.onerror = () => reject(request.error || new Error('Could not read offline queue.'));
+    }
+    transaction.oncomplete = () => resolve([
+      ...(results[STORE_NAME] || []),
+      ...(results[ATTENDANCE_STORE] || [])
+    ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
+    transaction.onerror = () => reject(transaction.error || new Error('Could not read offline queue.'));
   });
 }
 
-function removePendingOperation(database, id) {
+function removePendingOperation(database, storeName, id) {
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
-    transaction.objectStore(STORE_NAME).delete(id);
+    const transaction = database.transaction(storeName, 'readwrite');
+    transaction.objectStore(storeName).delete(id);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error || new Error('Could not update offline queue.'));
     transaction.onabort = () => reject(transaction.error || new Error('Offline queue update was aborted.'));
@@ -253,7 +348,7 @@ async function runQueue() {
           throw new Error(result.message || 'Server did not confirm the offline action.');
         }
 
-        await removePendingOperation(database, operation.id);
+        await removePendingOperation(database, operation.storeName, operation.id);
         await notifyClients({ type: 'OFFLINE_SYNC_COMPLETE', id: operation.id });
       }
       await notifyClients({ type: 'OFFLINE_SYNC_IDLE' });

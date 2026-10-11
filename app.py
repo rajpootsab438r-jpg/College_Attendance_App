@@ -307,9 +307,12 @@ def welcome():
 # 2. Secure Login Panel Gateway
 @app.route('/login/<role>', methods=['GET', 'POST'])
 def login(role):
+    if role not in {'admin', 'teacher', 'developer'}:
+        return 'Portal not found.', 404
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        wants_json = request.accept_mimetypes.best == 'application/json'
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -322,6 +325,12 @@ def login(role):
                 session['user'] = user['username']
                 session['college_name'] = user['college_name']
                 conn.close()
+                if wants_json:
+                    return jsonify({
+                        'status': 'success',
+                        'role': role,
+                        'dashboard': url_for('admin_dashboard')
+                    })
                 return redirect(url_for('admin_dashboard'))
         elif role == 'teacher':
             cursor.execute('SELECT * FROM teachers WHERE username = %s AND password = %s', (username, password))
@@ -334,15 +343,29 @@ def login(role):
                 session['subject'] = user['subject']
                 session['college_id'] = user['college_id']
                 conn.close()
+                if wants_json:
+                    return jsonify({
+                        'status': 'success',
+                        'role': role,
+                        'dashboard': url_for('teacher_dashboard')
+                    })
                 return redirect(url_for('teacher_dashboard'))
         elif role == 'developer':
             if username == "Cukur" and password == "Cukur301r":
                 session['role'] = 'developer'
                 session['user'] = 'Cukur'
                 conn.close()
+                if wants_json:
+                    return jsonify({
+                        'status': 'success',
+                        'role': role,
+                        'dashboard': url_for('developer_dashboard')
+                    })
                 return redirect(url_for('developer_dashboard'))
                 
         conn.close()
+        if wants_json:
+            return jsonify({'status': 'error', 'message': 'Invalid credentials. Please try again.'}), 401
         return "<h3>Invalid Credentials! Please try again.</h3>"
         
     return f"""
@@ -356,16 +379,19 @@ def login(role):
             input {{ width: 100%; padding: 11px; margin: 10px 0; border: 1px solid #ced4da; border-radius: 4px; box-sizing: border-box; }}
             button {{ width: 100%; padding: 11px; background: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 10px; }}
         </style></head>
-        <body>
+        <body data-login-role="{role}">
             <div class="box">
                 <h2>🔒 {role.upper()} PORTAL</h2>
-                <form method="POST">
-                    <input type="text" name="username" placeholder="Enter Username" autocomplete="off" required>
-                    <input type="password" name="password" placeholder="Enter Secret Password" required>
+                <form id="login-form" method="POST" action="/login/{role}">
+                    <input type="text" name="username" placeholder="Enter Username" autocomplete="username" required>
+                    <input type="password" name="password" placeholder="Enter Secret Password" autocomplete="current-password" required>
                     <button type="submit">Verify & Login</button>
                 </form>
+                <p id="login-status" role="status" aria-live="polite" hidden></p>
                 <br><a href="/" style="text-decoration:none; color:#666; font-size:13px;">⬅️ Go Back</a>
             </div>
+            <script src="/static/offline-sync.js"></script>
+            <script src="/static/offline-login.js"></script>
         </body>
     </html>
     """
@@ -468,6 +494,10 @@ def admin_dashboard():
         present_days = cursor.fetchone()['cnt']
         s_dict['percentage'] = round((present_days / total_days) * 100, 1) if total_days > 0 else 0.0
         students.append(s_dict)
+
+    if request.args.get('format') == 'json':
+        conn.close()
+        return jsonify({'students': students})
 
     edit_t_id = request.args.get('edit_t')
     edit_s_id = request.args.get('edit_s')
@@ -884,7 +914,18 @@ def teacher_dashboard():
     cursor = conn.cursor()
     cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
     col_info = cursor.fetchone()
-    total_periods = col_info['total_periods'] if col_info else 6
+    total_periods = int(col_info['total_periods'] or 6) if col_info else 6
+    try:
+        period_number = int(selected_period)
+    except (TypeError, ValueError):
+        period_number = 1
+    if period_number < 1 or period_number > total_periods:
+        period_number = 1
+    selected_period = str(period_number)
+    try:
+        datetime.strptime(selected_date, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        selected_date = datetime.today().strftime('%Y-%m-%d')
     
     if selected_program and selected_part:
         cursor.execute('SELECT * FROM students WHERE program = %s AND part = %s AND college_id = %s', (selected_program, selected_part, college_id))
@@ -892,11 +933,13 @@ def teacher_dashboard():
         for s in raw_students:
             s_dict = dict(s)
             cursor.execute('SELECT status FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', 
-                           (s['roll_no'], selected_date, int(selected_period), college_id))
+                           (s['roll_no'], selected_date, period_number, college_id))
             att_record = cursor.fetchone()
             s_dict['saved_status'] = att_record['status'] if att_record else ''
             students.append(s_dict)
     conn.close()
+    if request.args.get('format') == 'json':
+        return jsonify({'students': students})
     return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, 
                            selected_program=selected_program, selected_part=selected_part, 
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
@@ -920,6 +963,10 @@ def quick_attendance():
     if not isinstance(att_date, str) or not att_date:
         return sync_json_response('error', 400, message='An attendance date is required.')
     try:
+        datetime.strptime(att_date, '%Y-%m-%d')
+    except ValueError:
+        return sync_json_response('error', 400, message='Attendance date must use YYYY-MM-DD format.')
+    try:
         period_no = int(data.get('period', 1))
     except (TypeError, ValueError):
         return sync_json_response('error', 400, message='Period must be a number.')
@@ -927,9 +974,17 @@ def quick_attendance():
         return sync_json_response('error', 400, message='Period must be positive.')
     teacher_username = session.get('user')
     college_id = session.get('college_id')
+    if college_id is None:
+        return sync_json_response('error', 401, message='Teacher college is not configured.')
     
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
+    college = cursor.fetchone()
+    total_periods = int(college['total_periods'] or 0) if college else 0
+    if period_no > total_periods:
+        conn.close()
+        return sync_json_response('error', 400, message='Period is outside the configured college periods.')
     try:
         already_processed = begin_sync_operation(cursor)
     except ValueError as error:
@@ -939,14 +994,29 @@ def quick_attendance():
         conn.commit()
         conn.close()
         return sync_json_response(current_status=status)
-    cursor.execute(
-        'SELECT id FROM students WHERE roll_no = %s AND college_id = %s',
-        (roll.strip(), college_id)
-    )
-    if not cursor.fetchone():
+    student_id = data.get('student_id')
+    if student_id is not None:
+        try:
+            student_id = int(student_id)
+        except (TypeError, ValueError):
+            conn.rollback()
+            conn.close()
+            return sync_json_response('error', 400, message='Student ID must be a number.')
+        cursor.execute(
+            'SELECT id, roll_no FROM students WHERE id = %s AND college_id = %s',
+            (student_id, college_id)
+        )
+    else:
+        cursor.execute(
+            'SELECT id, roll_no FROM students WHERE roll_no = %s AND college_id = %s',
+            (roll.strip(), college_id)
+        )
+    student = cursor.fetchone()
+    if not student or (roll.strip() and roll.strip() != student['roll_no']):
         conn.rollback()
         conn.close()
         return sync_json_response('error', 404, message='Student not found in this college.')
+    roll = student['roll_no']
     cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', (roll, att_date, period_no, college_id))
     existing = cursor.fetchone()
     
