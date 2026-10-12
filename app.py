@@ -566,20 +566,15 @@ def dispatch_meta_whatsapp_message(recipient, message):
 
 
 @app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
-def whatsapp_bot_webhook():
+def whatsapp_webhook():
     if request.method == 'GET':
-        mode = request.args.get('hub.mode', '')
-        challenge = request.args.get('hub.challenge', '')
-        verify_token = request.args.get('hub.verify_token', '')
-        configured_token = os.environ.get(
-            'META_VERIFY_TOKEN', META_VERIFY_TOKEN_DEFAULT
-        )
-        if (
-            mode == 'subscribe' and challenge and configured_token and
-            hmac.compare_digest(verify_token, configured_token)
-        ):
-            return challenge, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-        return 'Forbidden', 403, {'Content-Type': 'text/plain; charset=utf-8'}
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        
+        if mode == 'subscribe' and token == 'CAS_Secret_Token_2026':
+            return str(challenge), 200
+        return 'Forbidden', 403
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
