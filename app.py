@@ -564,16 +564,13 @@ def dispatch_meta_whatsapp_message(recipient, message):
     )
     response.raise_for_status()
 
-
 @app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
 def whatsapp_bot_webhook():
     if request.method == 'GET':
         challenge = request.args.get('hub.challenge', '')
-        return str(challenge), 200
-        
+        return str(challenge), 200     
     # POST handling code keeps working below perfectly...
-
-    payload = request.get_json(silent=True)
+payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return '', 400
     messages = extract_meta_whatsapp_messages(payload)
