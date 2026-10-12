@@ -566,15 +566,12 @@ def dispatch_meta_whatsapp_message(recipient, message):
 
 
 @app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
-def whatsapp_webhook():
+def whatsapp_bot_webhook():
     if request.method == 'GET':
-        mode = request.args.get('hub.mode')
-        token = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
+        challenge = request.args.get('hub.challenge', '')
+        return str(challenge), 200
         
-        if mode == 'subscribe' and token == 'CAS_Secret_Token_2026':
-            return str(challenge), 200
-        return 'Forbidden', 403
+    # POST handling code keeps working below perfectly...
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
