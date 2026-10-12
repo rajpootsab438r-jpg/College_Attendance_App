@@ -1,12 +1,15 @@
 import os
 import sqlite3
 import threading
+import json
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import datetime
 import io
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 
 class SQLiteCursorProxy:
@@ -224,6 +227,65 @@ def offline_sync_actor_matches(role, actor_id):
 
 def sync_json_response(status='success', http_status=200, **payload):
     return jsonify({"status": status, **payload}), http_status
+
+
+def build_whatsapp_absence_payload(student, period_no, attendance_date, college_id):
+    student = dict(student)
+    message = (
+        f"Dear Parent, your child {student['student_name']} was marked ABSENT from College "
+        f"today during Period {period_no}. For queries, support is available at "
+        "WhatsApp: 03426600749."
+    )
+    return {
+        'channel': 'whatsapp',
+        'recipient': {'phone_number': (student.get('phone_number') or '').strip()},
+        'message': {'type': 'text', 'text': message},
+        'metadata': {
+            'event': 'attendance.absent',
+            'student_roll': student['roll_no'],
+            'period': period_no,
+            'attendance_date': attendance_date,
+            'college_id': college_id
+        }
+    }
+
+
+def dispatch_whatsapp_alert(payload):
+    gateway_url = os.environ.get('WHATSAPP_GATEWAY_URL', '').strip()
+    recipient = payload['recipient']['phone_number']
+    if not recipient:
+        app.logger.warning(
+            "WhatsApp attendance alert was not sent because the student has no parent phone number."
+        )
+        return 'missing_recipient'
+    if not gateway_url:
+        app.logger.info(
+            "WhatsApp attendance alert is ready but not sent; WHATSAPP_GATEWAY_URL is not configured."
+        )
+        return 'not_configured'
+
+    headers = {'Content-Type': 'application/json'}
+    gateway_token = os.environ.get('WHATSAPP_GATEWAY_TOKEN')
+    if gateway_token:
+        headers['Authorization'] = f'Bearer {gateway_token}'
+    try:
+        gateway_request = Request(
+            gateway_url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers=headers,
+            method='POST'
+        )
+        with urlopen(gateway_request, timeout=5) as response:
+            if not 200 <= response.status < 300:
+                app.logger.error(
+                    "WhatsApp gateway rejected an attendance alert with HTTP %s.",
+                    response.status
+                )
+                return 'gateway_error'
+        return 'sent'
+    except (URLError, TimeoutError, OSError, TypeError, ValueError) as error:
+        app.logger.error("WhatsApp attendance alert delivery failed: %s", error)
+        return 'gateway_error'
 
 
 def begin_sync_operation(cursor):
@@ -587,6 +649,100 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_lang=current_lang, edit_teacher=edit_teacher_data, edit_student=edit_student_data)
+
+
+@app.route('/admin/analytics', methods=['GET'])
+def admin_analytics():
+    if 'role' not in session or session['role'] != 'admin':
+        return sync_json_response('error', 401, message='Admin login is required.')
+    if not offline_sync_actor_matches('admin', session.get('user_id')):
+        return sync_json_response('error', 403, message='Queued action belongs to a different admin account.')
+
+    college_id = session.get('user_id')
+    attendance_date = datetime.today().strftime('%Y-%m-%d')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT COUNT(*) AS marked_count, '
+        'SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS present_count '
+        'FROM attendance WHERE attendance_date = %s AND college_id = %s',
+        ('Present', attendance_date, college_id)
+    )
+    totals = cursor.fetchone()
+    cursor.execute(
+        'SELECT s.program, s.part, COUNT(DISTINCT s.id) AS student_count, '
+        'SUM(CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END) AS marked_count, '
+        'SUM(CASE WHEN a.status = %s THEN 1 ELSE 0 END) AS present_count, '
+        'SUM(CASE WHEN a.status = %s THEN 1 ELSE 0 END) AS absent_count '
+        'FROM students s LEFT JOIN attendance a '
+        'ON a.student_roll = s.roll_no AND a.college_id = s.college_id '
+        'AND a.attendance_date = %s '
+        'WHERE s.college_id = %s GROUP BY s.program, s.part',
+        ('Present', 'Absent', attendance_date, college_id)
+    )
+    class_rows = cursor.fetchall()
+    conn.close()
+
+    marked_count = int(totals['marked_count'] or 0)
+    present_count = int(totals['present_count'] or 0)
+    departments = {}
+    sections = []
+    for row in class_rows:
+        row_marked = int(row['marked_count'] or 0)
+        row_present = int(row['present_count'] or 0)
+        row_absent = int(row['absent_count'] or 0)
+        program = row['program'] or 'Unassigned'
+        department = departments.setdefault(
+            program,
+            {'name': program, 'student_count': 0, 'marked_count': 0, 'present_count': 0}
+        )
+        department['student_count'] += int(row['student_count'] or 0)
+        department['marked_count'] += row_marked
+        department['present_count'] += row_present
+        absence_percentage = round(row_absent * 100 / row_marked, 1) if row_marked else 0
+        if row_absent and absence_percentage >= 30:
+            sections.append({
+                'program': program,
+                'part': row['part'] or 'Unassigned',
+                'absent_count': row_absent,
+                'marked_count': row_marked,
+                'absence_percentage': absence_percentage
+            })
+
+    department_stats = [
+        {
+            **department,
+            'percentage': round(
+                department['present_count'] * 100 / department['marked_count'], 1
+            ) if department['marked_count'] else 0
+        }
+        for department in departments.values()
+        if department['marked_count']
+    ]
+    department_stats.sort(
+        key=lambda department: (
+            department['percentage'],
+            department['present_count'],
+            department['name'].lower()
+        ),
+        reverse=True
+    )
+    sections.sort(
+        key=lambda section: (section['absence_percentage'], section['absent_count']),
+        reverse=True
+    )
+    return offline_seed_response({
+        'date': attendance_date,
+        'overall': {
+            'percentage': round(present_count * 100 / marked_count, 1) if marked_count else 0,
+            'present_count': present_count,
+            'marked_count': marked_count
+        },
+        'departments': department_stats[:5],
+        'sections': sections,
+        'absence_threshold': 30
+    })
+
 
 @app.route('/admin/import_students', methods=['POST'])
 def import_students():
@@ -1171,12 +1327,12 @@ def quick_attendance():
             conn.close()
             return sync_json_response('error', 400, message='Student ID must be a number.')
         cursor.execute(
-            'SELECT id, roll_no FROM students WHERE id = %s AND college_id = %s',
+            'SELECT id, roll_no, student_name, phone_number FROM students WHERE id = %s AND college_id = %s',
             (student_id, college_id)
         )
     else:
         cursor.execute(
-            'SELECT id, roll_no FROM students WHERE roll_no = %s AND college_id = %s',
+            'SELECT id, roll_no, student_name, phone_number FROM students WHERE roll_no = %s AND college_id = %s',
             (roll.strip(), college_id)
         )
     student = cursor.fetchone()
@@ -1195,7 +1351,13 @@ def quick_attendance():
         
     conn.commit()
     conn.close()
-    return sync_json_response(current_status=status)
+    response_payload = {'current_status': status}
+    if status == 'Absent' and att_date == datetime.today().strftime('%Y-%m-%d'):
+        alert_payload = build_whatsapp_absence_payload(
+            student, period_no, att_date, college_id
+        )
+        response_payload['whatsapp_alert_status'] = dispatch_whatsapp_alert(alert_payload)
+    return sync_json_response(**response_payload)
 
 # 📥 FIXED REAL APP DOWNLOAD ROUTE LINK INTERFACE: Direct dynamic target redirection mapping to bypass asset errors
 @app.route('/download/proposal-pdf')

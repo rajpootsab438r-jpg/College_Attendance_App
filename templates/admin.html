@@ -77,6 +77,22 @@
         .form-panel[hidden] { display: none; }
         .form-panel { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.2s ease; }
         .form-panel.is-open { max-height: 1400px; opacity: 1; }
+        .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 0 0 24px; }
+        .analytics-card { min-width: 0; padding: 20px; }
+        .analytics-card h3 { margin-bottom: 16px; }
+        .analytics-status { color: #64748b; font-size: 12px; margin: 0 0 14px; }
+        .attendance-gauge { width: 132px; height: 132px; margin: 8px auto 14px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(#198754 0%, #e9eef2 0%); position: relative; }
+        .attendance-gauge::before { content: ""; width: 102px; height: 102px; border-radius: 50%; background: white; position: absolute; }
+        .attendance-gauge-value { position: relative; z-index: 1; color: #0f5132; font-size: 25px; font-weight: 700; }
+        .analytics-caption { color: #64748b; text-align: center; font-size: 13px; }
+        .analytics-list { display: grid; gap: 12px; }
+        .analytics-row { display: grid; gap: 6px; }
+        .analytics-row-heading { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: #334155; }
+        .analytics-track { height: 9px; overflow: hidden; border-radius: 99px; background: #e9eef2; }
+        .analytics-fill { height: 100%; border-radius: inherit; background: #198754; transition: width 0.35s ease; }
+        .analytics-empty { color: #64748b; font-size: 13px; margin: 0; }
+        .bunk-alert { padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #9f1239; font-size: 13px; }
+        .bunk-alert strong { display: block; margin-bottom: 4px; }
     </style> 
     <script> 
         function togglePassword(id) { 
@@ -166,6 +182,26 @@
         <div><a href="/logout" class="logout-btn">{% if current_lang == 'ur' %}لاگ آؤٹ ➡️{% else %}Log Out ➡️{% endif %}</a></div>
     </div>
 </div>
+
+<section class="analytics-grid" aria-label="Attendance analytics">
+    <article class="card analytics-card">
+        <h3>📊 {% if current_lang == 'ur' %}آج کی مجموعی حاضری{% else %}Today's College Attendance{% endif %}</h3>
+        <p class="analytics-status" id="analytics-status" role="status" aria-live="polite">Loading today's analytics...</p>
+        <div class="attendance-gauge" id="attendance-gauge" role="img" aria-label="Attendance percentage">
+            <span class="attendance-gauge-value" id="attendance-percentage">—%</span>
+        </div>
+        <p class="analytics-caption" id="attendance-counts">Waiting for attendance data</p>
+    </article>
+    <article class="card analytics-card">
+        <h3>🏆 {% if current_lang == 'ur' %}بہترین کارکردگی والے شعبے{% else %}Top-performing Departments{% endif %}</h3>
+        <div class="analytics-list" id="department-tracker"><p class="analytics-empty">Loading department tracker...</p></div>
+    </article>
+    <article class="card analytics-card">
+        <h3>🚨 {% if current_lang == 'ur' %}زیادہ غیر حاضری والے سیکشن{% else %}Class Bunk Alert Matrix{% endif %}</h3>
+        <p class="analytics-status">Sections at or above a 30% absence rate</p>
+        <div class="analytics-list" id="bunk-alerts"><p class="analytics-empty">Loading section alerts...</p></div>
+    </article>
+</section>
 
 <div class="grid" style="margin-bottom: 20px;"> 
     <div class="card"> 
@@ -517,6 +553,134 @@
       .catch(error => {
         message.textContent = error instanceof Error ? error.message : 'Could not save this student list for offline use.';
       });
+  })();
+</script>
+<script>
+  (function() {
+    const statusNode = document.getElementById('analytics-status');
+    const gauge = document.getElementById('attendance-gauge');
+    const percentageNode = document.getElementById('attendance-percentage');
+    const countsNode = document.getElementById('attendance-counts');
+    const departmentsNode = document.getElementById('department-tracker');
+    const alertsNode = document.getElementById('bunk-alerts');
+    const actor = document.body.dataset.offlineActor;
+    const cacheKey = `admin-analytics:${actor}`;
+    if (!statusNode || !gauge || !percentageNode || !countsNode || !departmentsNode || !alertsNode) return;
+
+    function addEmptyState(container, text) {
+      const empty = document.createElement('p');
+      empty.className = 'analytics-empty';
+      empty.textContent = text;
+      container.replaceChildren(empty);
+    }
+
+    function addProgressRow(container, label, percentage, detail) {
+      const row = document.createElement('div');
+      row.className = 'analytics-row';
+      const heading = document.createElement('div');
+      heading.className = 'analytics-row-heading';
+      const name = document.createElement('span');
+      name.textContent = label;
+      const value = document.createElement('strong');
+      value.textContent = `${percentage}%${detail ? ` · ${detail}` : ''}`;
+      heading.append(name, value);
+      const track = document.createElement('div');
+      track.className = 'analytics-track';
+      track.setAttribute('role', 'img');
+      track.setAttribute('aria-label', `${label}: ${percentage}%`);
+      const fill = document.createElement('div');
+      fill.className = 'analytics-fill';
+      fill.style.width = `${Math.max(0, Math.min(100, percentage))}%`;
+      track.append(fill);
+      row.append(heading, track);
+      container.append(row);
+    }
+
+    function renderAnalytics(data) {
+      if (!data || !data.overall || !Array.isArray(data.departments) || !Array.isArray(data.sections)) {
+        throw new Error('The analytics response has an invalid format.');
+      }
+      const percentage = Math.max(0, Math.min(100, Number(data.overall.percentage) || 0));
+      percentageNode.textContent = `${percentage}%`;
+      gauge.style.background = `conic-gradient(#198754 ${percentage}%, #e9eef2 ${percentage}%)`;
+      gauge.setAttribute('aria-label', `College attendance: ${percentage}%`);
+      countsNode.textContent =
+        `${Number(data.overall.present_count) || 0} present out of ${Number(data.overall.marked_count) || 0} attendance records`;
+
+      departmentsNode.replaceChildren();
+      if (data.departments.length) {
+        data.departments.forEach(department => addProgressRow(
+          departmentsNode,
+          String(department.name || 'Unassigned'),
+          Math.max(0, Math.min(100, Number(department.percentage) || 0)),
+          `${Number(department.present_count) || 0}/${Number(department.marked_count) || 0} present`
+        ));
+      } else {
+        addEmptyState(departmentsNode, 'No department attendance recorded today.');
+      }
+
+      alertsNode.replaceChildren();
+      if (data.sections.length) {
+        data.sections.forEach(section => {
+          const alert = document.createElement('div');
+          alert.className = 'bunk-alert';
+          const title = document.createElement('strong');
+          title.textContent = `${section.program || 'Unassigned'} · ${section.part || 'Unassigned'}`;
+          const detail = document.createElement('span');
+          detail.textContent =
+            `${Number(section.absence_percentage) || 0}% absent — ${Number(section.absent_count) || 0} of ${Number(section.marked_count) || 0} marked`;
+          alert.append(title, detail);
+          alertsNode.append(alert);
+        });
+      } else {
+        addEmptyState(alertsNode, 'No sections currently meet the absence threshold.');
+      }
+    }
+
+    async function refreshAnalytics() {
+      let loadError = '';
+      if (navigator.onLine) {
+        try {
+          const response = await fetch('/admin/analytics', {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store'
+          });
+          if (!response.ok) throw new Error(`Could not load analytics (HTTP ${response.status}).`);
+          const data = await response.json();
+          renderAnalytics(data);
+          statusNode.textContent = `Live data · ${data.date}`;
+          if (window.OfflineSync) {
+            try {
+              await window.OfflineSync.saveSnapshot(cacheKey, data);
+            } catch (error) {
+              statusNode.textContent += ' · Offline copy could not be saved.';
+              console.error('Could not save the analytics snapshot.', error);
+            }
+          }
+          return;
+        } catch (error) {
+          loadError = error instanceof Error ? error.message : 'Could not load analytics.';
+        }
+      }
+
+      try {
+        const saved = window.OfflineSync ? await window.OfflineSync.getSnapshot(cacheKey) : null;
+        if (saved) {
+          renderAnalytics(saved);
+          statusNode.textContent = `Showing saved analytics from ${saved.date || 'the last visit'} (offline).`;
+          return;
+        }
+      } catch (error) {
+        loadError = error instanceof Error ? error.message : 'Could not read saved analytics.';
+      }
+      statusNode.textContent = loadError || 'No saved analytics are available offline yet.';
+      countsNode.textContent = 'Connect to load today’s attendance data.';
+      addEmptyState(departmentsNode, 'Department data is unavailable.');
+      addEmptyState(alertsNode, 'Section alerts are unavailable.');
+    }
+
+    refreshAnalytics();
   })();
 </script>
 <script>
