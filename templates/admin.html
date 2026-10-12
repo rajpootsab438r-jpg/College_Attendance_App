@@ -183,21 +183,8 @@
         .analytics-empty { color: #64748b; font-size: 13px; margin: 0; }
         .bunk-alert { padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #9f1239; font-size: 13px; }
         .bunk-alert strong { display: block; margin-bottom: 4px; }
-        .profile-image-preview { display: block; width: 96px; height: 96px; margin: 8px 0; border-radius: 50%; object-fit: cover; border: 2px solid #d1e7dd; }
-        .profile-image-status { min-height: 1.2em; color: #64748b; font-size: 12px; }
     </style> 
     <script> 
-        function togglePassword(id) { 
-            var el = document.getElementById('pass-' + id); 
-            var btn = document.getElementById('btn-' + id); 
-            if (el.innerText === '••••••••') { 
-                el.innerText = el.getAttribute('data-pass'); 
-                btn.innerText = 'Hide 👁️'; 
-            } else { 
-                el.innerText = '••••••••'; 
-                btn.innerText = 'Show 👁️'; 
-            } 
-        } 
         function toggleInputPassword(fieldId) { 
             var input = document.getElementById(fieldId); 
             var icon = document.getElementById('eye-icon-' + fieldId); 
@@ -275,7 +262,7 @@
         <h1>👑 {% if current_lang == 'ur' %}ایڈمن پینل | {{ college_name }}{% else %}Admin Panel | {{ college_name }}{% endif %}</h1> 
     </div>
     <div class="header-meta-info">
-        <div>{% if current_lang == 'ur' %}لاگ ان اکاؤنٹ: {% else %}Logged in as: {% endif %}<b style="color:#ffc107;">{{ current_user }}</b></div> 
+        <div>{% if current_lang == 'ur' %}لاگ ان اکاؤنٹ: {% else %}Logged in as: {% endif %}<b style="color:#ffc107;">{{ current_admin_name }}</b> <span>({{ current_user }})</span></div>
         <div><a href="/logout" class="logout-btn">{% if current_lang == 'ur' %}لاگ آؤٹ ➡️{% else %}Log Out ➡️{% endif %}</a></div>
     </div>
 </div>
@@ -300,14 +287,21 @@
     </article>
 </section>
 
-<div class="grid" style="margin-bottom: 20px;"> 
-    <div class="card"> 
-        <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن کا یوزر نیم تبدیل کریں{% else %}⚙️ Change Admin Username{% endif %}</h3> 
-        <form method="POST" action="/admin/dashboard"> 
-            <input type="hidden" name="action" value="change_username"> 
-            <input type="text" name="new_username" placeholder="{% if current_lang == 'ur' %}نیا یوزر نیم لکھیں{% else %}Enter New Username{% endif %}" autocomplete="off" required> 
-            <button type="submit" class="btn-success">{% if current_lang == 'ur' %}یوزر نیم اپڈیٹ کریں{% else %}Update Username{% endif %}</button> 
-        </form> 
+<div class="grid" style="margin-bottom: 20px;">
+    <div class="card full-width">
+        <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن پروفائل اور لاگ ان{% else %}⚙️ Admin Profile & Login{% endif %}</h3>
+        <form method="POST" action="/admin/dashboard" data-no-offline-queue="true">
+            <input type="hidden" name="action" value="update_admin_profile">
+            <label for="admin-display-name">Display Name</label>
+            <input id="admin-display-name" type="text" name="display_name" value="{{ current_admin_name }}" maxlength="120" autocomplete="name" required>
+            <label for="admin-login-username">Login Username</label>
+            <input id="admin-login-username" type="text" name="username" value="{{ current_user }}" minlength="3" maxlength="64" autocomplete="username" required>
+            <label for="admin-current-password">Current Password (required to save changes)</label>
+            <input id="admin-current-password" type="password" name="current_password" autocomplete="current-password" required>
+            <label for="admin-new-password">New Password (leave blank to keep current)</label>
+            <input id="admin-new-password" type="password" name="new_password" autocomplete="new-password">
+            <button type="submit" class="btn-success">Save Profile & Login</button>
+        </form>
     </div>
 </div>
 <div class="grid"> 
@@ -320,11 +314,6 @@
                 <input type="hidden" name="action" value="add_teacher">
                 <input type="text" name="teacher_id" placeholder="{% if current_lang == 'ur' %}ٹیچر آئی ڈی (اختیاری){% else %}Teacher ID (Optional){% endif %}" autocomplete="off">
                 <input type="text" name="name" placeholder="{% if current_lang == 'ur' %}ٹیچر کا نام{% else %}Teacher Name{% endif %}" autocomplete="off" required>
-                <label for="teacher-profile-image">Profile photo (optional)</label>
-                <input id="teacher-profile-image" type="file" accept="image/jpeg,image/png,image/webp" capture="user" data-profile-image>
-                <input type="hidden" name="profile_image_data" data-profile-image-data>
-                <img class="profile-image-preview" data-profile-image-preview alt="Teacher profile photo preview" hidden>
-                <p class="profile-image-status" data-profile-image-status role="status" aria-live="polite"></p>
                 <input type="text" name="username" placeholder="{% if current_lang == 'ur' %}لاگ ان یوزر نیم{% else %}Login Username{% endif %}" autocomplete="off" required>
                 <div class="password-container">
                     <input type="password" id="add_teacher_password" name="password" placeholder="{% if current_lang == 'ur' %}لاگ ان پاس ورڈ{% else %}Login Password{% endif %}" autocomplete="off" required>
@@ -345,11 +334,6 @@
                 <input type="hidden" name="action" value="add_student">
                 <input type="text" name="roll_no" placeholder="{% if current_lang == 'ur' %}رول نمبر{% else %}Roll Number{% endif %}" autocomplete="off" required>
                 <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required>
-                <label for="student-profile-image">Profile photo (optional)</label>
-                <input id="student-profile-image" type="file" accept="image/jpeg,image/png,image/webp" capture="user" data-profile-image>
-                <input type="hidden" name="profile_image_data" data-profile-image-data>
-                <img class="profile-image-preview" data-profile-image-preview alt="Student profile photo preview" hidden>
-                <p class="profile-image-status" data-profile-image-status role="status" aria-live="polite"></p>
                 <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required>
                 <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off">
                 <select name="program" required>
@@ -402,7 +386,7 @@
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">ID (Optional)</label><input type="text" name="teacher_id" value="{{ edit_teacher.teacher_id if edit_teacher.teacher_id else '' }}"></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Teacher Name</label><input type="text" name="name" value="{{ edit_teacher.name }}" required></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Username</label><input type="text" name="username" value="{{ edit_teacher.username }}" required></div>
-            <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Password</label><input type="text" name="password" value="{{ edit_teacher.password }}" required></div>
+            <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">New Password (optional)</label><input type="password" name="new_password" autocomplete="new-password"></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Book (Optional)</label><input type="text" name="subject" value="{{ edit_teacher.subject if edit_teacher.subject else '' }}"></div>
         </div>
         <button type="submit" class="btn-success" style="width:auto; padding:10px 25px;">💾 Save Changes</button>
@@ -429,20 +413,16 @@
 </div>
 {% endif %}
 <div class="card full-width" style="margin-top: 20px; overflow-x: auto;"> 
-    <h3>🧑‍🏫 {% if current_lang == 'ur' %}رجسٹرڈ اساتذہ کی لسٹ اور پاس ورڈ آڈٹ{% else %}Registered Teachers List & Passwords Audit{% endif %}</h3> 
+    <h3>🧑‍🏫 {% if current_lang == 'ur' %}رجسٹرڈ اساتذہ کی فہرست{% else %}Registered Teachers List{% endif %}</h3>
     <table> 
         <thead> 
-            <tr><th>Teacher ID</th><th>Name</th><th>Username</th><th>Password</th><th>Subject</th><th>Actions</th></tr> 
+            <tr><th>Teacher ID</th><th>Name</th><th>Username</th><th>Subject</th><th>Actions</th></tr>
         </thead> 
         <tbody> 
             {% for teacher in teachers %} 
             <tr> 
                 <td><b>{{ teacher.teacher_id if teacher.teacher_id else '-' }}</b></td> 
                 <td>{{ teacher.name }}</td><td>{{ teacher.username }}</td> 
-                <td> 
-                    <span id="pass-{{ teacher['id'] }}" data-pass="{{ teacher['password'] }}">••••••••</span> 
-                    <button type="button" id="btn-{{ teacher['id'] }}" class="view-pass-btn" onclick="togglePassword('{{ teacher['id'] }}')">Show 👁️</button> 
-                </td> 
                 <td>{{ teacher.subject if teacher.subject else '-' }}</td> 
                 <td> 
                     <div style="display: flex; gap: 8px;">
@@ -501,81 +481,6 @@
         </tbody> 
     </table>
 </div>
-<script>
-  (function() {
-    const maxImageBytes = 2 * 1024 * 1024;
-    const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
-    const pendingReads = new WeakMap();
-
-    function serializeImage(input) {
-      const file = input.files && input.files[0];
-      const form = input.form;
-      const dataField = form && form.querySelector('[data-profile-image-data]');
-      const preview = form && form.querySelector('[data-profile-image-preview]');
-      const status = form && form.querySelector('[data-profile-image-status]');
-      if (!file || !dataField || !preview || !status) return Promise.resolve('');
-
-      dataField.value = '';
-      preview.removeAttribute('src');
-      preview.hidden = true;
-      input.setCustomValidity('');
-      if (!allowedImageTypes.has(file.type)) {
-        input.setCustomValidity('Choose a JPEG, PNG, or WebP image.');
-        status.textContent = 'Choose a JPEG, PNG, or WebP image.';
-        return Promise.reject(new Error(status.textContent));
-      }
-      if (file.size > maxImageBytes) {
-        input.setCustomValidity('Profile photos must be 2 MB or smaller.');
-        status.textContent = 'Profile photos must be 2 MB or smaller.';
-        return Promise.reject(new Error(status.textContent));
-      }
-
-      const read = new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result !== 'string' || !reader.result.startsWith(`data:${file.type};base64,`)) {
-            reject(new Error('The selected photo could not be serialized.'));
-            return;
-          }
-          dataField.value = reader.result;
-          preview.src = reader.result;
-          preview.hidden = false;
-          status.textContent = navigator.onLine
-            ? 'Photo ready to upload.'
-            : 'Photo saved on this device and ready to sync when online.';
-          resolve(reader.result);
-        };
-        reader.onerror = () => reject(reader.error || new Error('Could not read the selected photo.'));
-        reader.readAsDataURL(file);
-      }).catch(error => {
-        input.setCustomValidity(error.message);
-        status.textContent = error.message;
-        throw error;
-      });
-      pendingReads.set(input, read);
-      return read;
-    }
-
-    document.querySelectorAll('[data-profile-image]').forEach(input => {
-      input.addEventListener('change', () => {
-        serializeImage(input).catch(() => {});
-      });
-    });
-
-    window.ProfileImageSerialization = {
-      async prepare(form) {
-        for (const input of form.querySelectorAll('[data-profile-image]')) {
-          if (!input.files || !input.files[0]) continue;
-          const dataField = form.querySelector('[data-profile-image-data]');
-          if (!dataField || !dataField.value) {
-            const pending = pendingReads.get(input);
-            await (pending || serializeImage(input));
-          }
-        }
-      }
-    };
-  })();
-</script>
 <script src="/static/offline-sync.js"></script>
 <script>
   (function() {

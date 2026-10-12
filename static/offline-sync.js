@@ -501,6 +501,7 @@
       if (!(form instanceof HTMLFormElement) || form.method.toUpperCase() !== 'POST') {
         return;
       }
+      if (form.hasAttribute('data-no-offline-queue')) return;
 
       const endpointPath = allowedQueueUrl(form.action || location.href);
       if (!endpointPath) {
@@ -513,9 +514,6 @@
       if (button) button.disabled = true;
 
       try {
-        if (window.ProfileImageSerialization) {
-          await window.ProfileImageSerialization.prepare(form);
-        }
         const formData = new FormData(form);
         if (submitter?.name) {
           formData.append(submitter.name, submitter.value);

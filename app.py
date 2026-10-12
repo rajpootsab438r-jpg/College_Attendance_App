@@ -2,9 +2,8 @@ import os
 import sqlite3
 import threading
 import json
-import base64
-import binascii
-import uuid
+import hmac
+import html
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
@@ -13,6 +12,7 @@ from datetime import datetime, timezone
 import io
 from urllib.request import Request, urlopen
 from urllib.error import URLError
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 class SQLiteCursorProxy:
@@ -74,9 +74,6 @@ class SQLiteCompatConnection:
 app = Flask(__name__)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(PROJECT_DIR, "static")
-PROFILE_IMAGE_DIR = os.path.join(STATIC_DIR, "uploads", "profile-images")
-PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
-app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
 app.secret_key = os.environ.get("SECRET_KEY", "attendance_cukur_secret_key_123")
 
@@ -118,6 +115,26 @@ def handle_database_connection_error(error):
         "status": "error",
         "message": "The database is temporarily unavailable. Check DATABASE_URL and the database provider's network/SSL settings."
     }), 503
+
+
+def verify_stored_password(stored_password, candidate):
+    if not isinstance(stored_password, str) or not isinstance(candidate, str):
+        return False
+    if stored_password.startswith(('scrypt:', 'pbkdf2:')):
+        try:
+            return check_password_hash(stored_password, candidate)
+        except (TypeError, ValueError):
+            return False
+    return hmac.compare_digest(
+        stored_password.encode('utf-8'),
+        candidate.encode('utf-8')
+    )
+
+
+def password_needs_hash_upgrade(stored_password):
+    return not isinstance(stored_password, str) or not stored_password.startswith(
+        ('scrypt:', 'pbkdf2:')
+    )
 
 
 def get_local_db_path():
@@ -307,51 +324,6 @@ def begin_sync_operation(cursor):
     return cursor.rowcount == 0
 
 
-def save_profile_image(data_url):
-    if not data_url:
-        return None
-    if not isinstance(data_url, str):
-        raise ValueError('Profile image must be a Base64 data URL.')
-
-    header, separator, encoded = data_url.partition(',')
-    allowed_types = {
-        'data:image/jpeg;base64': ('.jpg', lambda content: content.startswith(b'\xff\xd8\xff')),
-        'data:image/png;base64': ('.png', lambda content: content.startswith(b'\x89PNG\r\n\x1a\n')),
-        'data:image/webp;base64': (
-            '.webp',
-            lambda content: content.startswith(b'RIFF') and content[8:12] == b'WEBP'
-        )
-    }
-    if not separator or header not in allowed_types or not encoded:
-        raise ValueError('Profile image must be a JPEG, PNG, or WebP Base64 data URL.')
-    if len(encoded) > ((PROFILE_IMAGE_MAX_BYTES + 2) // 3) * 4:
-        raise ValueError('Profile image must be 2 MB or smaller.')
-    try:
-        image_bytes = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as error:
-        raise ValueError('Profile image contains invalid Base64 data.') from error
-    if not image_bytes or len(image_bytes) > PROFILE_IMAGE_MAX_BYTES:
-        raise ValueError('Profile image must be between 1 byte and 2 MB.')
-
-    extension, matches_signature = allowed_types[header]
-    if not matches_signature(image_bytes):
-        raise ValueError('Profile image content does not match its declared image type.')
-
-    os.makedirs(PROFILE_IMAGE_DIR, exist_ok=True)
-    filename = f'{uuid.uuid4().hex}{extension}'
-    path = os.path.join(PROFILE_IMAGE_DIR, filename)
-    with open(path, 'xb') as image_file:
-        image_file.write(image_bytes)
-    return f'/static/uploads/profile-images/{filename}'
-
-
-def remove_profile_image(image_url):
-    if image_url:
-        path = os.path.join(PROFILE_IMAGE_DIR, os.path.basename(image_url))
-        if os.path.isfile(path):
-            os.remove(path)
-
-
 def admin_request_value(values, key, required=False):
     value = values.get(key, '')
     if not isinstance(value, str):
@@ -526,13 +498,20 @@ def login(role):
         cursor = conn.cursor()
         
         if role == 'admin':
-            cursor.execute('SELECT * FROM admins WHERE username = %s AND password = %s', (username, password))
+            cursor.execute('SELECT * FROM admins WHERE username = %s', (username,))
             user = cursor.fetchone()
-            if user:
+            if user and verify_stored_password(user['password'], password):
+                if password_needs_hash_upgrade(user['password']):
+                    cursor.execute(
+                        'UPDATE admins SET password = %s WHERE id = %s',
+                        (generate_password_hash(password), user['id'])
+                    )
+                    conn.commit()
                 session['role'] = 'admin'
                 session['user_id'] = user['id']
                 session['user'] = user['username']
                 session['college_name'] = user['college_name']
+                session['admin_name'] = user['display_name'] or user['college_name']
                 conn.close()
                 if wants_json:
                     return jsonify({
@@ -542,9 +521,15 @@ def login(role):
                     })
                 return redirect(url_for('admin_dashboard'))
         elif role == 'teacher':
-            cursor.execute('SELECT * FROM teachers WHERE username = %s AND password = %s', (username, password))
+            cursor.execute('SELECT * FROM teachers WHERE username = %s', (username,))
             user = cursor.fetchone()
-            if user:
+            if user and verify_stored_password(user['password'], password):
+                if password_needs_hash_upgrade(user['password']):
+                    cursor.execute(
+                        'UPDATE teachers SET password = %s WHERE id = %s',
+                        (generate_password_hash(password), user['id'])
+                    )
+                    conn.commit()
                 session['role'] = 'teacher'
                 session['user_id'] = user['id']
                 session['user'] = user['username']
@@ -560,9 +545,18 @@ def login(role):
                     })
                 return redirect(url_for('teacher_dashboard'))
         elif role == 'developer':
-            if username == "Cukur" and password == "Cukur301r":
+            cursor.execute('SELECT * FROM developer_accounts WHERE username = %s', (username,))
+            user = cursor.fetchone()
+            if user and verify_stored_password(user['password'], password):
+                if password_needs_hash_upgrade(user['password']):
+                    cursor.execute(
+                        'UPDATE developer_accounts SET password = %s WHERE id = %s',
+                        (generate_password_hash(password), user['id'])
+                    )
+                    conn.commit()
                 session['role'] = 'developer'
-                session['user'] = 'Cukur'
+                session['user_id'] = user['id']
+                session['user'] = user['username']
                 conn.close()
                 if wants_json:
                     return jsonify({
@@ -616,6 +610,7 @@ def admin_dashboard():
     college_id = session.get('user_id')
     current_username = session.get('user')
     college_name = session.get('college_name')
+    current_admin_name = session.get('admin_name', college_name)
     current_lang = session.get('lang', 'en')
     
     selected_program = request.args.get('program', '')
@@ -623,6 +618,11 @@ def admin_dashboard():
     
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute('SELECT display_name FROM admins WHERE id = %s', (college_id,))
+    admin_profile = cursor.fetchone()
+    if admin_profile:
+        current_admin_name = admin_profile['display_name'] or college_name
+        session['admin_name'] = current_admin_name
     
     if request.method == 'POST':
         request_values = request.form
@@ -631,7 +631,7 @@ def admin_dashboard():
             request_values = json_values
         action = request_values.get('action')
         mutation_actions = {
-            'change_username', 'add_teacher', 'add_student', 'edit_teacher_admin',
+            'add_teacher', 'add_student', 'edit_teacher_admin',
             'edit_student_admin', 'delete_teacher', 'delete_student'
         }
         if is_offline_sync_request() and action not in mutation_actions:
@@ -647,67 +647,102 @@ def admin_dashboard():
                 conn.commit()
                 conn.close()
                 return sync_json_response()
-        if action == 'change_username':
-            new_user = request.form['new_username']
-            cursor.execute('UPDATE admins SET username = %s WHERE id = %s', (new_user, college_id))
-            conn.commit()
-            session['user'] = new_user
-            current_username = new_user
+        if action == 'edit_teacher_admin':
+            teacher_id = admin_request_value(request_values, 'id', required=True)
+            password = admin_request_value(request_values, 'new_password')
+            cursor.execute(
+                'SELECT password FROM teachers WHERE id = %s AND college_id = %s',
+                (teacher_id, college_id)
+            )
+            teacher_record = cursor.fetchone()
+            if not teacher_record:
+                conn.close()
+                return sync_json_response('error', 404, message='Teacher account was not found.')
+            password_to_store = (
+                generate_password_hash(password) if password else teacher_record['password']
+            )
+            try:
+                cursor.execute(
+                    'UPDATE teachers SET teacher_id = %s, name = %s, username = %s, password = %s, subject = %s '
+                    'WHERE id = %s AND college_id = %s',
+                    (
+                        admin_request_value(request_values, 'teacher_id'),
+                        admin_request_value(request_values, 'name', required=True),
+                        admin_request_value(request_values, 'username', required=True),
+                        password_to_store,
+                        admin_request_value(request_values, 'subject'),
+                        teacher_id,
+                        college_id
+                    )
+                )
+                conn.commit()
+            except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+                conn.rollback()
+                conn.close()
+                return sync_json_response('error', 409, message='That teacher username is already in use.')
+            if is_offline_sync_request():
+                conn.close()
+                return sync_json_response()
+            conn.close()
+            return redirect(url_for('admin_dashboard'))
+        if action == 'update_admin_profile':
+            try:
+                display_name = admin_request_value(request_values, 'display_name', required=True).strip()
+                new_username = admin_request_value(request_values, 'username', required=True).strip()
+                current_password = admin_request_value(request_values, 'current_password', required=True)
+                new_password = admin_request_value(request_values, 'new_password')
+                if len(display_name) > 120 or len(new_username) < 3 or len(new_username) > 64:
+                    raise ValueError('Display name must be 120 characters or fewer and username must be 3–64 characters.')
+                cursor.execute('SELECT password FROM admins WHERE id = %s', (college_id,))
+                stored = cursor.fetchone()
+                if not stored or not verify_stored_password(stored['password'], current_password):
+                    conn.close()
+                    return sync_json_response('error', 403, message='Current password is incorrect.')
+                password_to_store = (
+                    generate_password_hash(new_password) if new_password else stored['password']
+                )
+                cursor.execute(
+                    'UPDATE admins SET display_name = %s, username = %s, password = %s WHERE id = %s',
+                    (display_name, new_username, password_to_store, college_id)
+                )
+                conn.commit()
+                current_admin_name = display_name
+                current_username = new_username
+                session['admin_name'] = display_name
+                session['user'] = new_username
+            except ValueError as error:
+                conn.rollback()
+                conn.close()
+                return sync_json_response('error', 400, message=str(error))
+            except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+                conn.rollback()
+                conn.close()
+                return sync_json_response('error', 409, message='That username is already in use.')
         elif action == 'add_teacher':
-            profile_image = None
-            try:
-                teacher_id = admin_request_value(request_values, 'teacher_id')
-                name = admin_request_value(request_values, 'name', required=True)
-                username = admin_request_value(request_values, 'username', required=True)
-                password = admin_request_value(request_values, 'password', required=True)
-                subject = admin_request_value(request_values, 'subject')
-                profile_image = save_profile_image(
-                    admin_request_value(request_values, 'profile_image_data')
-                )
-                cursor.execute(
-                    'INSERT INTO teachers (teacher_id, name, username, password, subject, profile_image, college_id) '
-                    'VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                    (teacher_id, name, username, password, subject, profile_image, college_id)
-                )
-                conn.commit()
-            except ValueError as error:
-                conn.rollback()
-                remove_profile_image(profile_image)
-                conn.close()
-                return sync_json_response('error', 400, message=str(error))
-            except Exception:
-                conn.rollback()
-                remove_profile_image(profile_image)
-                conn.close()
-                raise
+            teacher_id = admin_request_value(request_values, 'teacher_id')
+            name = admin_request_value(request_values, 'name', required=True)
+            username = admin_request_value(request_values, 'username', required=True)
+            password = admin_request_value(request_values, 'password', required=True)
+            subject = admin_request_value(request_values, 'subject')
+            cursor.execute(
+                'INSERT INTO teachers (teacher_id, name, username, password, subject, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s)',
+                (teacher_id, name, username, generate_password_hash(password), subject, college_id)
+            )
+            conn.commit()
         elif action == 'add_student':
-            profile_image = None
-            try:
-                roll_no = admin_request_value(request_values, 'roll_no', required=True)
-                student_name = admin_request_value(request_values, 'student_name', required=True)
-                father_name = admin_request_value(request_values, 'father_name', required=True)
-                phone_number = admin_request_value(request_values, 'phone_number')
-                program = admin_request_value(request_values, 'program', required=True)
-                part = admin_request_value(request_values, 'part', required=True)
-                profile_image = save_profile_image(
-                    admin_request_value(request_values, 'profile_image_data')
-                )
-                cursor.execute(
-                    'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, profile_image, college_id) '
-                    'VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
-                    (roll_no, student_name, father_name, phone_number, program, part, profile_image, college_id)
-                )
-                conn.commit()
-            except ValueError as error:
-                conn.rollback()
-                remove_profile_image(profile_image)
-                conn.close()
-                return sync_json_response('error', 400, message=str(error))
-            except Exception:
-                conn.rollback()
-                remove_profile_image(profile_image)
-                conn.close()
-                raise
+            roll_no = admin_request_value(request_values, 'roll_no', required=True)
+            student_name = admin_request_value(request_values, 'student_name', required=True)
+            father_name = admin_request_value(request_values, 'father_name', required=True)
+            phone_number = admin_request_value(request_values, 'phone_number')
+            program = admin_request_value(request_values, 'program', required=True)
+            part = admin_request_value(request_values, 'part', required=True)
+            cursor.execute(
+                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                (roll_no, student_name, father_name, phone_number, program, part, college_id)
+            )
+            conn.commit()
         elif action == 'edit_teacher_admin':
             # 🛠️ FIXED 100% OPTIONAL: Teacher details ko edit karte waqt optional values khali chordne par system null strings handle karega
             t_id_val = request.form.get('teacher_id', '').strip()
@@ -777,7 +812,8 @@ def admin_dashboard():
     conn.close()
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
-                           current_lang=current_lang, edit_teacher=edit_teacher_data, edit_student=edit_student_data)
+                           current_admin_name=current_admin_name, current_lang=current_lang,
+                           edit_teacher=edit_teacher_data, edit_student=edit_student_data)
 
 
 @app.route('/admin/analytics', methods=['GET'])
@@ -938,8 +974,82 @@ def developer_dashboard():
     
     if request.method == 'POST':
         action = request.form.get('action')
+        if action == 'edit_college_admin_dev':
+            admin_id = request.form.get('id')
+            college_name = request.form.get('college_name', '').strip()
+            display_name = request.form.get('display_name', '').strip()
+            username = request.form.get('username', '').strip()
+            new_password = request.form.get('new_password', '')
+            if not college_name or not display_name or len(display_name) > 120:
+                conn.close()
+                return sync_json_response('error', 400, message='College name and an admin display name of 120 characters or fewer are required.')
+            if len(username) < 3 or len(username) > 64:
+                conn.close()
+                return sync_json_response('error', 400, message='Admin username must be 3–64 characters.')
+            cursor.execute('SELECT password FROM admins WHERE id = %s', (admin_id,))
+            admin_record = cursor.fetchone()
+            if not admin_record:
+                conn.close()
+                return sync_json_response('error', 404, message='Admin account was not found.')
+            password_to_store = (
+                generate_password_hash(new_password)
+                if new_password else admin_record['password']
+            )
+            try:
+                cursor.execute(
+                    'UPDATE admins SET college_name = %s, display_name = %s, username = %s, '
+                    'password = %s, total_periods = %s WHERE id = %s',
+                    (
+                        college_name,
+                        display_name,
+                        username,
+                        password_to_store,
+                        request.form.get('total_periods', 6),
+                        admin_id
+                    )
+                )
+                conn.commit()
+            except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+                conn.rollback()
+                conn.close()
+                return sync_json_response('error', 409, message='That admin username is already in use.')
+            conn.close()
+            return redirect(url_for('developer_dashboard'))
+
+        if action == 'update_developer_profile':
+            username = request.form.get('username', '').strip()
+            current_password = request.form.get('current_password', '')
+            new_password = request.form.get('new_password', '')
+            if len(username) < 3 or len(username) > 64:
+                conn.close()
+                return sync_json_response('error', 400, message='Username must be 3–64 characters.')
+            cursor.execute('SELECT password FROM developer_accounts WHERE id = %s', (session.get('user_id'),))
+            developer_account = cursor.fetchone()
+            if not developer_account or not verify_stored_password(
+                developer_account['password'], current_password
+            ):
+                conn.close()
+                return sync_json_response('error', 403, message='Current password is incorrect.')
+            password_to_store = (
+                generate_password_hash(new_password)
+                if new_password else developer_account['password']
+            )
+            try:
+                cursor.execute(
+                    'UPDATE developer_accounts SET username = %s, password = %s WHERE id = %s',
+                    (username, password_to_store, session.get('user_id'))
+                )
+                conn.commit()
+            except (sqlite3.IntegrityError, psycopg2.IntegrityError):
+                conn.rollback()
+                conn.close()
+                return sync_json_response('error', 409, message='That developer username is already in use.')
+            session['user'] = username
+            conn.close()
+            return redirect(url_for('developer_dashboard'))
+
         mutation_actions = {
-            'create_new_college', 'update_college_periods', 'edit_college_admin_dev',
+            'create_new_college', 'update_college_periods',
             'update_teacher_dev', 'update_student_dev'
         }
         if is_offline_sync_request() and action not in mutation_actions:
@@ -955,10 +1065,49 @@ def developer_dashboard():
                 conn.commit()
                 conn.close()
                 return sync_json_response()
+        if action == 'update_teacher_dev':
+            teacher_id = request.form.get('id')
+            new_password = request.form.get('new_password', '')
+            cursor.execute('SELECT password FROM teachers WHERE id = %s', (teacher_id,))
+            teacher_record = cursor.fetchone()
+            if not teacher_record:
+                conn.close()
+                return sync_json_response('error', 404, message='Teacher account was not found.')
+            password_to_store = (
+                generate_password_hash(new_password)
+                if new_password else teacher_record['password']
+            )
+            cursor.execute(
+                'UPDATE teachers SET teacher_id = %s, name = %s, username = %s, password = %s, subject = %s '
+                'WHERE id = %s',
+                (
+                    request.form.get('teacher_id', ''),
+                    request.form.get('name', '').strip(),
+                    request.form.get('username', '').strip(),
+                    password_to_store,
+                    request.form.get('subject', ''),
+                    teacher_id
+                )
+            )
+            conn.commit()
+            if is_offline_sync_request():
+                conn.close()
+                return sync_json_response()
+            conn.close()
+            return redirect(url_for('developer_dashboard'))
         if action == 'create_new_college':
             try:
-                cursor.execute('INSERT INTO admins (college_name, username, password, total_periods) VALUES (%s, %s, %s, %s)', 
-                             (request.form['college_name'], request.form['username'], request.form['password'], request.form.get('total_periods', 6)))
+                cursor.execute(
+                    'INSERT INTO admins (college_name, display_name, username, password, total_periods) '
+                    'VALUES (%s, %s, %s, %s, %s)',
+                    (
+                        request.form['college_name'],
+                        request.form['display_name'],
+                        request.form['username'],
+                        generate_password_hash(request.form['password']),
+                        request.form.get('total_periods', 6)
+                    )
+                )
                 conn.commit()
             except (sqlite3.IntegrityError, psycopg2.IntegrityError):
                 conn.rollback()
@@ -1013,19 +1162,57 @@ def developer_dashboard():
         cursor.execute('SELECT * FROM students WHERE id=%s', (request.args.get('edit_s'),))
         edit_s_data = cursor.fetchone()
         
-    college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{c['college_name']} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{c['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>🔑 {c['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/college/{c['id']}' onsubmit='return confirm(\"Delete Account Master?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for c in colleges])
-    teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{t['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{t['teacher_id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['username']}</td><td style='border:1px solid #a3cfbb;padding:12px;color:#198754;font-weight:bold;'>{t['password']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{t['subject']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/teacher/{t['id']}' onsubmit='return confirm(\"Delete Teacher?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for t in all_teachers])
+    safe_value = lambda value: html.escape(str(value or ''), quote=True)
+    college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{safe_value(c['college_name'])} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(c['display_name'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(c['username'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/college/{c['id']}' onsubmit='return confirm(\"Delete Account Master?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for c in colleges])
+    teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['college_name'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{safe_value(t['teacher_id'])}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['name'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['username'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['subject'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/teacher/{t['id']}' onsubmit='return confirm(\"Delete Teacher?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for t in all_teachers])
     student_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_s={s['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/student/{s['id']}' onsubmit='return confirm(\"Delete Student?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for s in all_students])
 
     edit_box = ""
     if edit_c_data:
-        edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit College Admin Account</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='edit_college_admin_dev'><input type='hidden' name='id' value='{edit_c_data['id']}'><input type='text' name='college_name' value='{edit_c_data['college_name']}' placeholder='College Name' style='flex:1;min-width:200px;'><input type='text' name='username' value='{edit_c_data['username']}' placeholder='Admin User'><input type='text' name='password' value='{edit_c_data['password']}' placeholder='Admin Pass'><input type='number' name='total_periods' value='{edit_c_data['total_periods']}' style='width:80px;'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
+        edit_box = (
+            "<div style='background:#d1e7dd;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #badbcc;'>"
+            "<h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit College Admin Account</h4>"
+            "<form method='POST' data-no-offline-queue='true' style='display:flex;gap:10px;flex-wrap:wrap;'>"
+            "<input type='hidden' name='action' value='edit_college_admin_dev'>"
+            f"<input type='hidden' name='id' value='{edit_c_data['id']}'>"
+            f"<input type='text' name='college_name' value='{safe_value(edit_c_data['college_name'])}' placeholder='College Name' style='flex:1;min-width:200px;'>"
+            f"<input type='text' name='display_name' value='{safe_value(edit_c_data['display_name'])}' placeholder='Admin Display Name' required>"
+            f"<input type='text' name='username' value='{safe_value(edit_c_data['username'])}' placeholder='Admin Username' required>"
+            "<input type='password' name='new_password' placeholder='New admin password (optional)' autocomplete='new-password'>"
+            f"<input type='number' name='total_periods' value='{edit_c_data['total_periods']}' style='width:80px;'>"
+            "<button type='submit' style='width:auto;background:#198754;'>Save Updates</button>"
+            "<a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a>"
+            "</form></div>"
+        )
     elif edit_t_data:
-        edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Faculty Teacher</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_teacher_dev'><input type='hidden' name='id' value='{edit_t_data['id']}'><input type='text' name='teacher_id' value='{edit_t_data['teacher_id']}' placeholder='ID' style='width:120px;'><input type='text' name='name' value='{edit_t_data['name']}' placeholder='Name'><input type='text' name='username' value='{edit_t_data['username']}' placeholder='User'><input type='text' name='password' value='{edit_t_data['password']}' placeholder='Pass'><input type='text' name='subject' value='{edit_t_data['subject']}' placeholder='Subject'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
+        edit_box = (
+            "<div style='background:#d1e7dd;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #badbcc;'>"
+            "<h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Faculty Teacher</h4>"
+            "<form method='POST' data-no-offline-queue='true' style='display:flex;gap:10px;flex-wrap:wrap;'>"
+            "<input type='hidden' name='action' value='update_teacher_dev'>"
+            f"<input type='hidden' name='id' value='{edit_t_data['id']}'>"
+            f"<input type='text' name='teacher_id' value='{safe_value(edit_t_data['teacher_id'])}' placeholder='ID' style='width:120px;'>"
+            f"<input type='text' name='name' value='{safe_value(edit_t_data['name'])}' placeholder='Name'>"
+            f"<input type='text' name='username' value='{safe_value(edit_t_data['username'])}' placeholder='User'>"
+            "<input type='password' name='new_password' placeholder='New password (optional)' autocomplete='new-password'>"
+            f"<input type='text' name='subject' value='{safe_value(edit_t_data['subject'])}' placeholder='Subject'>"
+            "<button type='submit' style='width:auto;background:#198754;'>Save Updates</button>"
+            "<a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a>"
+            "</form></div>"
+        )
     elif edit_s_data:
         edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Student Record</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_student_dev'><input type='hidden' name='id' value='{edit_s_data['id']}'><input type='text' name='roll_no' value='{edit_s_data['roll_no']}' placeholder='Roll' style='width:120px;'><input type='text' name='student_name' value='{edit_s_data['student_name']}' placeholder='Name'><input type='text' name='father_name' value='{edit_s_data['father_name']}' placeholder='Father'><input type='text' name='phone_number' value='{edit_s_data['phone_number']}' placeholder='Phone'><input type='text' name='program' value='{edit_s_data['program']}' placeholder='Program'><input type='text' name='part' value='{edit_s_data['part']}' placeholder='Part'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
+    developer_profile_box = (
+        "<div class='card full-width'><h3>🔐 Developer Profile</h3>"
+        "<form method='POST' action='/developer/dashboard' data-no-offline-queue='true'>"
+        "<input type='hidden' name='action' value='update_developer_profile'>"
+        f"<label>Username<input type='text' name='username' value='{safe_value(session.get('user'))}' autocomplete='username' required></label>"
+        "<label>Current password<input type='password' name='current_password' autocomplete='current-password' required></label>"
+        "<label>New password (leave blank to keep current)<input type='password' name='new_password' autocomplete='new-password'></label>"
+        "<button type='submit'>Update Developer Login</button></form></div>"
+    )
     conn.close()
-    return """
+    dashboard_html = """
     <html>
         <head>
             <title>Dev Dashboard</title>
@@ -1056,7 +1243,7 @@ def developer_dashboard():
                 <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
                 <a href="/logout" style="color: white; font-weight: bold; text-decoration: none; background: rgba(0,0,0,0.2); padding: 8px 15px; border-radius: 5px;">Log Out ➡️</a>
             </div>
-            """ + edit_box + """
+            """ + edit_box + developer_profile_box + """
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>
@@ -1065,8 +1252,9 @@ def developer_dashboard():
                         <form method="POST" action="/developer/create_college">
                             <input type="hidden" name="action" value="create_new_college">
                             <input type="text" name="college_name" placeholder="College Name (e.g. Punjab College)" required>
+                            <input type="text" name="display_name" placeholder="Admin Display Name (e.g. Prof. Asif)" required>
                             <input type="text" name="username" placeholder="Admin Username" required>
-                            <input type="text" name="password" placeholder="Admin Password" required>
+                            <input type="password" name="password" placeholder="Admin Password" autocomplete="new-password" required>
                             <input type="number" name="total_periods" placeholder="Total Periods Config" value="6" required>
                             <button type="submit">Create Account</button>
                         </form>
@@ -1076,7 +1264,7 @@ def developer_dashboard():
                     <h3>📋 Registered Accounts Matrix</h3>
                     <table>
                         <thead>
-                            <tr><th>ID</th><th>College Name</th><th>User</th><th>Pass</th><th>Periods</th><th>Action</th></tr>
+                            <tr><th>ID</th><th>College Name</th><th>Admin Name</th><th>User</th><th>Periods</th><th>Action</th></tr>
                         </thead>
                         <tbody>
                             """ + college_rows + """
@@ -1087,7 +1275,7 @@ def developer_dashboard():
                     <h3>🧑‍🏫 Faculty Verification Audit</h3>
                     <table>
                         <thead>
-                            <tr><th>College</th><th>Teacher ID</th><th>Name</th><th>User</th><th>Pass (Real)</th><th>Subject</th><th>Action</th></tr>
+                            <tr><th>College</th><th>Teacher ID</th><th>Name</th><th>User</th><th>Subject</th><th>Action</th></tr>
                         </thead>
                         <tbody>
                             """ + teacher_rows + """
@@ -1134,6 +1322,10 @@ def developer_dashboard():
         </body>
     </html>
     """
+    return dashboard_html.replace(
+        'data-offline-actor="developer:Cukur"',
+        f'data-offline-actor="developer:{safe_value(session.get("user"))}"'
+    )
 # Create college through a dedicated endpoint so Vercel routes the POST explicitly.
 @app.route('/developer/create_college', methods=['POST'])
 def developer_create_college():
@@ -1143,11 +1335,14 @@ def developer_create_college():
         return sync_json_response('error', 403, message='Queued action belongs to a different developer account.')
 
     college_name = request.form.get('college_name', '').strip()
+    display_name = request.form.get('display_name', '').strip()
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '')
     total_periods = request.form.get('total_periods', '6')
-    if not college_name or not username or not password:
-        return sync_json_response('error', 400, message='College name, username, and password are required.')
+    if not college_name or not display_name or not username or not password:
+        return sync_json_response('error', 400, message='College name, admin display name, username, and password are required.')
+    if len(display_name) > 120 or len(username) < 3 or len(username) > 64:
+        return sync_json_response('error', 400, message='Admin display name must be 120 characters or fewer and username must be 3–64 characters.')
     try:
         total_periods = int(total_periods)
     except (TypeError, ValueError):
@@ -1163,8 +1358,9 @@ def developer_create_college():
             conn.commit()
             return sync_json_response()
         cursor.execute(
-            'INSERT INTO admins (college_name, username, password, total_periods) VALUES (%s, %s, %s, %s)',
-            (college_name, username, password, total_periods)
+            'INSERT INTO admins (college_name, display_name, username, password, total_periods) '
+            'VALUES (%s, %s, %s, %s, %s)',
+            (college_name, display_name, username, generate_password_hash(password), total_periods)
         )
         conn.commit()
     except ValueError as error:

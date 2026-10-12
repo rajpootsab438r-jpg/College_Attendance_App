@@ -3,6 +3,7 @@ import sqlite3
 from urllib.parse import urlparse
 
 import psycopg2
+from werkzeug.security import generate_password_hash
 
 
 def get_database_url():
@@ -32,7 +33,19 @@ def setup_database():
         conn = sqlite3.connect(get_local_db_path())
         try:
             with conn:
-                conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
+                conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
+                admin_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(admins)").fetchall()
+                }
+                if 'display_name' not in admin_columns:
+                    conn.execute("ALTER TABLE admins ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+                conn.execute("UPDATE admins SET display_name = college_name WHERE display_name = ''")
+                conn.execute("CREATE TABLE IF NOT EXISTS developer_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL)")
+                if not conn.execute("SELECT 1 FROM developer_accounts LIMIT 1").fetchone():
+                    conn.execute(
+                        "INSERT INTO developer_accounts (username, password) VALUES (?, ?)",
+                        ("Cukur", generate_password_hash("Cukur301r"))
+                    )
                 conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(teacher_id, college_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(roll_no, college_id))")
                 for table_name in ('teachers', 'students'):
@@ -49,8 +62,8 @@ def setup_database():
                 if 'client_timestamp' not in attendance_columns:
                     conn.execute("ALTER TABLE attendance ADD COLUMN client_timestamp TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Punjab College", "admin1", "pc123", 8))
-                conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Superior College", "admin2", "sc123", 5))
+                conn.execute("INSERT OR IGNORE INTO admins (college_name, display_name, username, password, total_periods) VALUES (?, ?, ?, ?, ?)", ("Punjab College", "Punjab College Admin", "admin1", "pc123", 8))
+                conn.execute("INSERT OR IGNORE INTO admins (college_name, display_name, username, password, total_periods) VALUES (?, ?, ?, ?, ?)", ("Superior College", "Superior College Admin", "admin2", "sc123", 5))
         finally:
             conn.close()
         print("Database schema is ready; existing records were preserved.")
@@ -64,11 +77,27 @@ def setup_database():
                 CREATE TABLE IF NOT EXISTS admins (
                     id SERIAL PRIMARY KEY,
                     college_name TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
                     username TEXT UNIQUE NOT NULL,
                     password TEXT NOT NULL,
                     total_periods INTEGER DEFAULT 6
                 )
                 """)
+                cursor.execute("ALTER TABLE admins ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''")
+                cursor.execute("UPDATE admins SET display_name = college_name WHERE display_name = ''")
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS developer_accounts (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL
+                )
+                """)
+                cursor.execute("SELECT 1 FROM developer_accounts LIMIT 1")
+                if not cursor.fetchone():
+                    cursor.execute(
+                        "INSERT INTO developer_accounts (username, password) VALUES (%s, %s)",
+                        ("Cukur", generate_password_hash("Cukur301r"))
+                    )
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS teachers (
                     id SERIAL PRIMARY KEY,
@@ -120,14 +149,14 @@ def setup_database():
                 )
                 """)
                 cursor.execute(
-                    "INSERT INTO admins (college_name, username, password, total_periods) "
-                    "VALUES (%s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
-                    ("Punjab College", "admin1", "pc123", 8)
+                    "INSERT INTO admins (college_name, display_name, username, password, total_periods) "
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
+                    ("Punjab College", "Punjab College Admin", "admin1", "pc123", 8)
                 )
                 cursor.execute(
-                    "INSERT INTO admins (college_name, username, password, total_periods) "
-                    "VALUES (%s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
-                    ("Superior College", "admin2", "sc123", 5)
+                    "INSERT INTO admins (college_name, display_name, username, password, total_periods) "
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
+                    ("Superior College", "Superior College Admin", "admin2", "sc123", 5)
                 )
     finally:
         conn.close()
