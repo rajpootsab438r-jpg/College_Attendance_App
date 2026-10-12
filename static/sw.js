@@ -312,6 +312,21 @@ async function notifyClients(message) {
   clients.forEach((client) => client.postMessage(message));
 }
 
+async function showAppNotification(title, options = {}) {
+  if (!self.Notification || self.Notification.permission !== 'granted') {
+    return;
+  }
+  try {
+    await self.registration.showNotification(title, {
+      icon: '/static/icon.svg',
+      badge: '/static/icon.svg',
+      ...options
+    });
+  } catch (error) {
+    console.warn('Could not display a PWA notification:', error);
+  }
+}
+
 async function runQueue() {
   if (syncPromise) {
     return syncPromise;
@@ -356,6 +371,14 @@ async function runQueue() {
 
         await removePendingOperation(database, operation.storeName, operation.id);
         await notifyClients({ type: 'OFFLINE_SYNC_COMPLETE', id: operation.id });
+        if (operation.storeName === ATTENDANCE_STORE &&
+            new URL(operation.url, self.location.origin).pathname === '/teacher/quick_attendance') {
+          await showAppNotification('Attendance Sync', {
+            body: 'Sync Complete: Attendance data successfully uploaded to the cloud server.',
+            tag: `attendance-sync-${operation.id}`,
+            data: { url: '/teacher/dashboard' }
+          });
+        }
       }
       await notifyClients({ type: 'OFFLINE_SYNC_IDLE' });
     } catch (error) {
@@ -389,6 +412,56 @@ self.addEventListener('sync', (event) => {
   if (event.tag === SYNC_TAG) {
     event.waitUntil(runQueue());
   }
+});
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  if (event.data) {
+    try {
+      const parsed = event.data.json();
+      if (parsed && typeof parsed === 'object') payload = parsed;
+    } catch (error) {
+      payload = { body: event.data.text() };
+    }
+  }
+  const title = typeof payload.title === 'string' ? payload.title : 'College Attendance';
+  const body = typeof payload.body === 'string'
+    ? payload.body
+    : 'You have a new attendance update.';
+  const targetUrl = typeof payload.url === 'string' ? payload.url : '/teacher/dashboard';
+  event.waitUntil(showAppNotification(title, {
+    body,
+    tag: typeof payload.tag === 'string' ? payload.tag : 'college-attendance-push',
+    data: { url: targetUrl }
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    let targetUrl;
+    try {
+      targetUrl = new URL(
+        event.notification.data?.url || '/teacher/dashboard',
+        self.location.origin
+      );
+    } catch (error) {
+      console.warn('Ignoring a notification with an invalid destination.', error);
+      return;
+    }
+    if (targetUrl.origin !== self.location.origin) return;
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if (new URL(client.url).origin === self.location.origin) {
+        await client.focus();
+        if ('navigate' in client && new URL(client.url).pathname !== targetUrl.pathname) {
+          await client.navigate(targetUrl.href);
+        }
+        return;
+      }
+    }
+    await self.clients.openWindow(targetUrl.href);
+  })());
 });
 
 self.addEventListener('message', (event) => {

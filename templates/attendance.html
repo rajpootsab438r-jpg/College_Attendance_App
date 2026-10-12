@@ -19,9 +19,80 @@
             }
         })();
     </script>
+    <script>
+        (function() {
+            var themeKey = 'college-attendance-theme';
+            var colorScheme = window.matchMedia('(prefers-color-scheme: dark)');
+            var savedTheme = null;
+            try { savedTheme = localStorage.getItem(themeKey); } catch (error) {
+                console.warn('Could not read the saved theme preference.', error);
+            }
+            var activeTheme = savedTheme === 'dark' || savedTheme === 'light'
+                ? savedTheme
+                : (colorScheme.matches ? 'dark' : 'light');
+            function applyTheme(theme, persist) {
+                activeTheme = theme;
+                document.documentElement.setAttribute('data-theme', theme);
+                if (persist) {
+                    try { localStorage.setItem(themeKey, theme); } catch (error) {
+                        console.warn('Could not persist the selected theme.', error);
+                    }
+                }
+                var toggle = document.getElementById('theme-toggle');
+                if (toggle) {
+                    toggle.setAttribute('aria-checked', String(theme === 'dark'));
+                    toggle.querySelector('.theme-switch').textContent = theme === 'dark' ? 'On' : 'Off';
+                    toggle.querySelector('.theme-toggle-label').textContent =
+                        theme === 'dark' ? 'Dark Mode' : 'Light Mode';
+                }
+            }
+            applyTheme(activeTheme, false);
+            document.addEventListener('DOMContentLoaded', function() {
+                applyTheme(activeTheme, false);
+                var notificationButton = document.getElementById('notification-permission-toggle');
+                if (notificationButton && 'Notification' in window &&
+                    Notification.permission === 'granted') {
+                    notificationButton.textContent = 'Attendance notifications enabled';
+                }
+            });
+            colorScheme.addEventListener('change', function(event) {
+                try {
+                    if (!localStorage.getItem(themeKey)) applyTheme(event.matches ? 'dark' : 'light', false);
+                } catch (error) {
+                    applyTheme(event.matches ? 'dark' : 'light', false);
+                }
+            });
+            window.toggleThemeMode = function() {
+                applyTheme(activeTheme === 'dark' ? 'light' : 'dark', true);
+            };
+            window.enableAttendanceNotifications = async function() {
+                var button = document.getElementById('notification-permission-toggle');
+                if (!('Notification' in window)) {
+                    if (button) button.textContent = 'Notifications are not supported';
+                    return;
+                }
+                try {
+                    var permission = Notification.permission === 'default'
+                        ? await Notification.requestPermission()
+                        : Notification.permission;
+                    if (button) button.textContent = permission === 'granted'
+                        ? 'Attendance notifications enabled'
+                        : 'Notifications blocked in browser settings';
+                } catch (error) {
+                    console.warn('Could not request notification permission.', error);
+                    if (button) button.textContent = 'Could not enable notifications';
+                }
+            };
+        })();
+    </script>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#28a745">
     <style>
+        :root { color-scheme: light; --page-bg: #f4f6f9; --surface: #ffffff; --text: #212529; --muted: #64748b; --border: #dee2e6; --input-bg: #ffffff; --table-alt: #f8fafc; }
+        html[data-theme="dark"] { color-scheme: dark; --page-bg: #111827; --surface: #1f2937; --text: #e5e7eb; --muted: #a8b3c2; --border: #374151; --input-bg: #111827; --table-alt: #273449; }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme]) { color-scheme: dark; --page-bg: #111827; --surface: #1f2937; --text: #e5e7eb; --muted: #a8b3c2; --border: #374151; --input-bg: #111827; --table-alt: #273449; }
+        }
         body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; text-align: {% if current_lang == 'ur' %}right{% else %}left{% endif %}; transition: max-width 0.3s ease; margin-left: auto; margin-right: auto; }
         
         /* 📱 Mobile Responsive Header Optimization Layout */
@@ -70,6 +141,20 @@
         .btn-action-a { background-color: #dc3545; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
         .btn-action-l { background-color: #ffc107; color: #212529; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
         .btn-action-v { background-color: #6f42c1; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px; }
+        body { background-color: var(--page-bg); color: var(--text); }
+        .card, .nav-dropdown-menu { background-color: var(--surface); color: var(--text); border-color: var(--border); }
+        h3 { color: var(--text); }
+        input, select, textarea { background-color: var(--input-bg); color: var(--text); border-color: var(--border); }
+        html[data-theme="dark"] input:focus, html[data-theme="dark"] select:focus, html[data-theme="dark"] textarea:focus { background-color: var(--input-bg); color: var(--text); }
+        th { background-color: var(--table-alt); color: var(--text); }
+        html[data-theme="dark"] .info-bar { background: #123c2b; color: #d1fae5; border-color: #166534; }
+        td { border-color: var(--border); }
+        tr:nth-child(even) { background-color: var(--table-alt); }
+        .nav-dropdown-menu a, .nav-dropdown-menu button { color: var(--text); }
+        html[data-theme="dark"] .nav-dropdown-menu a:hover, html[data-theme="dark"] .nav-dropdown-menu button:hover { background: #273449; color: #86efac; }
+        .theme-menu-button { justify-content: space-between; }
+        .theme-switch { min-width: 38px; padding: 3px 7px; border-radius: 20px; background: #64748b; color: white; font-size: 11px; text-align: center; }
+        html[data-theme="dark"] .theme-switch { background: #198754; }
         
     </style>
     <script>
@@ -167,6 +252,11 @@
             <button type="button" onclick="toggleDesktopView()">
                 <span id="desktop-toggle-text">🖥️ Desktop View</span>
             </button>
+            <button id="theme-toggle" class="theme-menu-button" type="button" role="switch" aria-checked="false" onclick="toggleThemeMode()">
+                <span class="theme-toggle-label">Light Mode</span>
+                <span class="theme-switch">Off</span>
+            </button>
+            <button id="notification-permission-toggle" type="button" onclick="enableAttendanceNotifications()">Enable attendance notifications</button>
             <a href="/logout">Logout ➡️</a>
         </div>
     </div>
