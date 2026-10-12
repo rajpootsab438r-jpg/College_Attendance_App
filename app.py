@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
+import requests
 from datetime import date, datetime, timedelta, timezone
 import io
 from urllib.request import Request, urlopen
@@ -388,49 +389,48 @@ WHATSAPP_UNVERIFIED_REPLY = (
     "(Example: FAIT Part-2 15 Report), or contact Administration at "
     "Support/WhatsApp: 03426600749."
 )
+META_VERIFY_TOKEN_DEFAULT = 'CAS_Secret_Token_2026'
 
 
-def extract_whatsapp_message(payload):
+class MetaWhatsAppConfigurationError(RuntimeError):
+    pass
+
+
+def extract_meta_whatsapp_messages(payload):
     if not isinstance(payload, dict):
-        return '', ''
+        return []
 
-    message = payload
+    parsed_messages = []
     entries = payload.get('entry')
-    if isinstance(entries, list) and entries and isinstance(entries[0], dict):
-        changes = entries[0].get('changes')
-        if isinstance(changes, list) and changes and isinstance(changes[0], dict):
-            value = changes[0].get('value')
-            if isinstance(value, dict):
-                messages = value.get('messages')
-                if isinstance(messages, list) and messages and isinstance(messages[0], dict):
-                    message = messages[0]
-                    contacts = value.get('contacts')
-                    if isinstance(contacts, list) and contacts and isinstance(contacts[0], dict):
-                        payload = {**payload, 'sender': contacts[0].get('wa_id')}
-
-    sender = next((
-        payload.get(key) for key in (
-            'sender', 'sender_mobile', 'mobile_number', 'phone_number', 'phone', 'mobile',
-            'from', 'wa_id', 'From'
-        )
-        if isinstance(payload.get(key), str) and payload.get(key).strip()
-    ), '')
-    if not sender and isinstance(message, dict):
-        sender = next((
-            message.get(key) for key in (
-                'sender', 'sender_mobile', 'mobile_number', 'phone_number', 'phone', 'mobile',
-                'from', 'wa_id', 'From'
-            )
-            if isinstance(message.get(key), str) and message.get(key).strip()
-        ), '')
-
-    text_value = next((
-        message.get(key) for key in ('text', 'text_message', 'message_body', 'body', 'message', 'Body')
-        if isinstance(message.get(key), (str, dict))
-    ), '')
-    if isinstance(text_value, dict):
-        text_value = text_value.get('body', '')
-    return sender.strip(), text_value.strip() if isinstance(text_value, str) else ''
+    if not isinstance(entries, list):
+        return parsed_messages
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        changes = entry.get('changes')
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            value = change.get('value')
+            if not isinstance(value, dict):
+                continue
+            messages = value.get('messages')
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, dict) or message.get('type') != 'text':
+                    continue
+                sender = message.get('from')
+                text_payload = message.get('text')
+                text = text_payload.get('body') if isinstance(text_payload, dict) else None
+                if (
+                    isinstance(sender, str) and sender.strip() and
+                    isinstance(text, str) and text.strip()
+                ):
+                    parsed_messages.append((sender.strip(), text.strip()))
+    return parsed_messages
 
 
 def parse_whatsapp_context(message):
@@ -514,7 +514,7 @@ def whatsapp_attendance_reply(cursor, student, intent):
         ) or 'None'
         return (
             f"Assalamu Alaikum! {student_label} was absent or on leave on these specific "
-            f"dates over the past 30 days: {dates}. CAS Portal Management."
+            f"dates over the past 30 days: {dates}. CAS System Management."
         )
 
     cursor.execute(
@@ -531,39 +531,98 @@ def whatsapp_attendance_reply(cursor, student, intent):
             f"Period {record['period_no']}: {record['status']}" for record in records
         )
         attendance_summary = f"today's active periods are recorded as follows: {period_summary}"
-    return f"Assalamu Alaikum! {student_label} — {attendance_summary}. CAS Portal Management."
+    return f"Assalamu Alaikum! {student_label} — {attendance_summary}. CAS System Management."
 
 
-@app.route('/api/whatsapp_bot_webhook', methods=['POST'])
-def whatsapp_bot_webhook():
-    payload = request.get_json(silent=True)
-    if payload is None:
-        payload = request.form.to_dict()
-    sender, message = extract_whatsapp_message(payload)
-    if not message:
-        return jsonify({'status': 'error', 'message': 'A WhatsApp text message is required.'}), 400
+def dispatch_meta_whatsapp_message(recipient, message):
+    access_token = os.environ.get('META_ACCESS_TOKEN', '').strip()
+    phone_number_id = os.environ.get('META_PHONE_NUMBER_ID', '').strip()
+    api_version = os.environ.get('META_GRAPH_API_VERSION', '').strip()
+    if not access_token or not phone_number_id or not api_version:
+        raise MetaWhatsAppConfigurationError(
+            'META_ACCESS_TOKEN, META_PHONE_NUMBER_ID, and META_GRAPH_API_VERSION must be configured.'
+        )
+    if not re.fullmatch(r'\d+', phone_number_id):
+        raise MetaWhatsAppConfigurationError('META_PHONE_NUMBER_ID must contain only digits.')
+    if not re.fullmatch(r'v\d+\.\d+', api_version):
+        raise MetaWhatsAppConfigurationError('META_GRAPH_API_VERSION must use the format vNN.N.')
 
-    context = parse_whatsapp_context(message)
-    intent_match = WHATSAPP_INTENT_PATTERN.search(message)
-    intent = context['intent'] if context else (
-        intent_match.group(1).lower() if intent_match else None
+    response = requests.post(
+        f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        },
+        json={
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': recipient,
+            'type': 'text',
+            'text': {'preview_url': False, 'body': message}
+        },
+        timeout=(3.05, 10)
     )
-    conn = get_db_connection()
+    response.raise_for_status()
+
+
+@app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
+def whatsapp_bot_webhook():
+    if request.method == 'GET':
+        mode = request.args.get('hub.mode', '')
+        challenge = request.args.get('hub.challenge', '')
+        verify_token = request.args.get('hub.verify_token', '')
+        configured_token = os.environ.get(
+            'META_VERIFY_TOKEN', META_VERIFY_TOKEN_DEFAULT
+        )
+        if (
+            mode == 'subscribe' and challenge and configured_token and
+            hmac.compare_digest(verify_token, configured_token)
+        ):
+            return challenge, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        return 'Forbidden', 403, {'Content-Type': 'text/plain; charset=utf-8'}
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return '', 400
+    messages = extract_meta_whatsapp_messages(payload)
+    if not messages:
+        # Meta also sends status-only webhook events; acknowledge without replying.
+        return '', 200
+
+    conn = None
     try:
+        conn = get_db_connection()
         cursor = conn.cursor()
-        student = find_whatsapp_student(cursor, sender, context)
-        if not student:
-            return jsonify({'reply': WHATSAPP_UNVERIFIED_REPLY})
-        if not intent:
-            reply = (
-                "Please request Report, Attendance, or Status. You can include class, part, "
-                "and roll number, for example: FAIT Part-2 15 Report."
+        for sender, message in messages:
+            context = parse_whatsapp_context(message)
+            intent_match = WHATSAPP_INTENT_PATTERN.search(message)
+            intent = context['intent'] if context else (
+                intent_match.group(1).lower() if intent_match else None
             )
-        else:
-            reply = whatsapp_attendance_reply(cursor, student, intent)
-        return jsonify({'reply': reply})
+            student = find_whatsapp_student(cursor, sender, context)
+            if not student:
+                reply = WHATSAPP_UNVERIFIED_REPLY
+            elif not intent:
+                reply = (
+                    "Please request Report, Attendance, or Status. You can include class, part, "
+                    "and roll number, for example: FAIT Part-2 15 Report."
+                )
+            else:
+                reply = whatsapp_attendance_reply(cursor, student, intent)
+            dispatch_meta_whatsapp_message(sender, reply)
+        return '', 200
+    except MetaWhatsAppConfigurationError as error:
+        app.logger.error('Meta WhatsApp API configuration error: %s', error)
+        return jsonify({'status': 'error', 'message': 'WhatsApp messaging is not configured.'}), 503
+    except requests.RequestException:
+        app.logger.exception('Meta WhatsApp API message dispatch failed.')
+        return jsonify({'status': 'error', 'message': 'WhatsApp message delivery failed.'}), 502
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('WhatsApp webhook database operation failed.')
+        return jsonify({'status': 'error', 'message': 'Attendance records are temporarily unavailable.'}), 503
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def delete_student_record(cursor, student_id, college_id):
