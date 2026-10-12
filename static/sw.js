@@ -1,4 +1,4 @@
-const CACHE_NAME = 'college-attendance-v15';
+const CACHE_NAME = 'college-attendance-v16';
 const CACHE_PREFIX = 'college-attendance-';
 const OFFLINE_URL = '/offline';
 const SYNC_TAG = 'sync-cukur-data';

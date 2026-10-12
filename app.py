@@ -4,11 +4,12 @@ import threading
 import json
 import hmac
 import html
+import re
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import io
 from urllib.request import Request, urlopen
 from urllib.error import URLError
@@ -373,6 +374,196 @@ def get_db_connection():
         return conn
     conn = psycopg2.connect(database_url, cursor_factory=DictCursor)
     return conn
+
+
+WHATSAPP_CONTEXT_PATTERN = re.compile(
+    r'(?P<program>[A-Za-z][A-Za-z0-9 &._-]*?)\s+Part[\s-]*(?P<part>\d+)\s+'
+    r'(?P<roll>\d+)\s+(?P<intent>report|attendance|status)\s*',
+    re.IGNORECASE
+)
+WHATSAPP_INTENT_PATTERN = re.compile(r'\b(report|attendance|status)\b', re.IGNORECASE)
+WHATSAPP_UNVERIFIED_REPLY = (
+    "We could not verify your records. Please reply with your child's credentials in this exact "
+    "format to fetch logs: [Class Name] [Part] [Roll Number] Report "
+    "(Example: FAIT Part-2 15 Report), or contact Administration at "
+    "Support/WhatsApp: 03426600749."
+)
+
+
+def extract_whatsapp_message(payload):
+    if not isinstance(payload, dict):
+        return '', ''
+
+    message = payload
+    entries = payload.get('entry')
+    if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+        changes = entries[0].get('changes')
+        if isinstance(changes, list) and changes and isinstance(changes[0], dict):
+            value = changes[0].get('value')
+            if isinstance(value, dict):
+                messages = value.get('messages')
+                if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+                    message = messages[0]
+                    contacts = value.get('contacts')
+                    if isinstance(contacts, list) and contacts and isinstance(contacts[0], dict):
+                        payload = {**payload, 'sender': contacts[0].get('wa_id')}
+
+    sender = next((
+        payload.get(key) for key in (
+            'sender', 'sender_mobile', 'mobile_number', 'phone_number', 'phone', 'mobile',
+            'from', 'wa_id', 'From'
+        )
+        if isinstance(payload.get(key), str) and payload.get(key).strip()
+    ), '')
+    if not sender and isinstance(message, dict):
+        sender = next((
+            message.get(key) for key in (
+                'sender', 'sender_mobile', 'mobile_number', 'phone_number', 'phone', 'mobile',
+                'from', 'wa_id', 'From'
+            )
+            if isinstance(message.get(key), str) and message.get(key).strip()
+        ), '')
+
+    text_value = next((
+        message.get(key) for key in ('text', 'text_message', 'message_body', 'body', 'message', 'Body')
+        if isinstance(message.get(key), (str, dict))
+    ), '')
+    if isinstance(text_value, dict):
+        text_value = text_value.get('body', '')
+    return sender.strip(), text_value.strip() if isinstance(text_value, str) else ''
+
+
+def parse_whatsapp_context(message):
+    match = WHATSAPP_CONTEXT_PATTERN.fullmatch(message.strip())
+    if not match:
+        return None
+    return {
+        'program': match.group('program').strip(),
+        'part': match.group('part'),
+        'roll': str(int(match.group('roll'))),
+        'intent': match.group('intent').lower()
+    }
+
+
+def normalized_whatsapp_part(part):
+    return re.sub(r'[^a-z0-9]', '', str(part).lower())
+
+
+def normalized_whatsapp_phone(phone):
+    digits = re.sub(r'\D', '', phone)
+    return digits[2:] if digits.startswith('00') else digits
+
+
+def find_whatsapp_student(cursor, sender, context):
+    student_columns = 'id, roll_no, student_name, phone_number, program, part, college_id'
+    if context:
+        cursor.execute(
+            'SELECT ' + student_columns + ' FROM students '
+            'WHERE LOWER(TRIM(program)) = LOWER(TRIM(%s)) AND roll_no = %s',
+            (context['program'], context['roll'])
+        )
+        students = [
+            student for student in cursor.fetchall()
+            if normalized_whatsapp_part(student['part']) ==
+            normalized_whatsapp_part('Part-' + context['part'])
+        ]
+        return students[0] if len(students) == 1 else None
+
+    normalized_sender = normalized_whatsapp_phone(sender)
+    if not normalized_sender:
+        return None
+    cursor.execute(
+        'SELECT ' + student_columns + ' FROM students WHERE phone_number IS NOT NULL'
+    )
+    students = []
+    for student in cursor.fetchall():
+        stored_phone = normalized_whatsapp_phone(student['phone_number'] or '')
+        phone_matches = stored_phone == normalized_sender or (
+            len(stored_phone) >= 10 and len(normalized_sender) >= 10 and
+            stored_phone[-10:] == normalized_sender[-10:]
+        )
+        if phone_matches:
+            students.append(student)
+    return students[0] if len(students) == 1 else None
+
+
+def whatsapp_attendance_reply(cursor, student, intent):
+    student_class = f"{student['program']} {student['part']}"
+    student_label = (
+        f"Student {student['student_name']} (Roll No: {student['roll_no']}, "
+        f"Class: {student_class})"
+    )
+    if intent in {'report', 'attendance'}:
+        today = date.today()
+        cursor.execute(
+            'SELECT attendance_date, period_no FROM attendance '
+            'WHERE student_roll = %s AND college_id = %s '
+            'AND attendance_date >= %s AND attendance_date <= %s '
+            'AND LOWER(status) IN (%s, %s) '
+            'ORDER BY attendance_date ASC, period_no ASC',
+            (
+                student['roll_no'], student['college_id'],
+                (today - timedelta(days=30)).isoformat(), today.isoformat(),
+                'absent', 'leave'
+            )
+        )
+        records = cursor.fetchall()
+        dates = ', '.join(
+            f"{record['attendance_date']} (Period {record['period_no']})"
+            for record in records
+        ) or 'None'
+        return (
+            f"Assalamu Alaikum! {student_label} was absent or on leave on these specific "
+            f"dates over the past 30 days: {dates}. CAS Portal Management."
+        )
+
+    cursor.execute(
+        'SELECT period_no, status FROM attendance '
+        'WHERE student_roll = %s AND college_id = %s AND attendance_date = %s '
+        'ORDER BY period_no ASC',
+        (student['roll_no'], student['college_id'], date.today().isoformat())
+    )
+    records = cursor.fetchall()
+    if not records:
+        attendance_summary = "no attendance has been recorded for today's active periods"
+    else:
+        period_summary = ', '.join(
+            f"Period {record['period_no']}: {record['status']}" for record in records
+        )
+        attendance_summary = f"today's active periods are recorded as follows: {period_summary}"
+    return f"Assalamu Alaikum! {student_label} — {attendance_summary}. CAS Portal Management."
+
+
+@app.route('/api/whatsapp_bot_webhook', methods=['POST'])
+def whatsapp_bot_webhook():
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict()
+    sender, message = extract_whatsapp_message(payload)
+    if not message:
+        return jsonify({'status': 'error', 'message': 'A WhatsApp text message is required.'}), 400
+
+    context = parse_whatsapp_context(message)
+    intent_match = WHATSAPP_INTENT_PATTERN.search(message)
+    intent = context['intent'] if context else (
+        intent_match.group(1).lower() if intent_match else None
+    )
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        student = find_whatsapp_student(cursor, sender, context)
+        if not student:
+            return jsonify({'reply': WHATSAPP_UNVERIFIED_REPLY})
+        if not intent:
+            reply = (
+                "Please request Report, Attendance, or Status. You can include class, part, "
+                "and roll number, for example: FAIT Part-2 15 Report."
+            )
+        else:
+            reply = whatsapp_attendance_reply(cursor, student, intent)
+        return jsonify({'reply': reply})
+    finally:
+        conn.close()
 
 
 def delete_student_record(cursor, student_id, college_id):

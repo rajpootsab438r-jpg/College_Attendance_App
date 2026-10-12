@@ -213,6 +213,40 @@
         }
         document.addEventListener('DOMContentLoaded', function() {
             applyDesktopView(localStorage.getItem('desktopView') === 'true');
+            var profileToggle = document.getElementById('admin-profile-settings-toggle');
+            var profilePanel = document.getElementById('admin-profile-settings');
+            var profileCancel = document.getElementById('admin-profile-settings-cancel');
+            if (profileToggle && profilePanel) {
+                function setProfileSettingsOpen(open) {
+                    profileToggle.setAttribute('aria-expanded', String(open));
+                    if (open) {
+                        profilePanel.hidden = false;
+                        requestAnimationFrame(function() {
+                            if (profileToggle.getAttribute('aria-expanded') === 'true') {
+                                profilePanel.classList.add('is-open');
+                            }
+                        });
+                    } else {
+                        profilePanel.classList.remove('is-open');
+                    }
+                }
+                profileToggle.addEventListener('click', function() {
+                    setProfileSettingsOpen(profileToggle.getAttribute('aria-expanded') !== 'true');
+                });
+                profilePanel.addEventListener('transitionend', function(event) {
+                    if (event.target === profilePanel && event.propertyName === 'max-height' &&
+                        profileToggle.getAttribute('aria-expanded') === 'false') {
+                        profilePanel.hidden = true;
+                    }
+                });
+                if (profileCancel) {
+                    profileCancel.addEventListener('click', function(event) {
+                        event.preventDefault();
+                        setProfileSettingsOpen(false);
+                        profileToggle.focus();
+                    });
+                }
+            }
             document.querySelectorAll('[data-form-toggle]').forEach(function(button) {
                 var panel = document.getElementById(button.getAttribute('aria-controls'));
                 if (!panel) return;
@@ -290,18 +324,22 @@
 <div class="grid" style="margin-bottom: 20px;">
     <div class="card full-width">
         <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن پروفائل اور لاگ ان{% else %}⚙️ Admin Profile & Login{% endif %}</h3>
-        <form method="POST" action="/admin/dashboard" data-no-offline-queue="true">
-            <input type="hidden" name="action" value="update_admin_profile">
-            <label for="admin-display-name">Display Name</label>
-            <input id="admin-display-name" type="text" name="display_name" value="{{ current_admin_name }}" maxlength="120" autocomplete="name" required>
-            <label for="admin-login-username">Login Username</label>
-            <input id="admin-login-username" type="text" name="username" value="{{ current_user }}" minlength="3" maxlength="64" autocomplete="username" required>
-            <label for="admin-current-password">Current Password (required to save changes)</label>
-            <input id="admin-current-password" type="password" name="current_password" autocomplete="current-password" required>
-            <label for="admin-new-password">New Password (leave blank to keep current)</label>
-            <input id="admin-new-password" type="password" name="new_password" autocomplete="new-password">
-            <button type="submit" class="btn-success">Save Profile & Login</button>
-        </form>
+        <button type="button" id="admin-profile-settings-toggle" class="form-toggle" aria-expanded="false" aria-controls="admin-profile-settings">⚙️ Edit Profile &amp; Security Settings</button>
+        <div id="admin-profile-settings" class="form-panel" hidden>
+            <form method="POST" action="/admin/dashboard" data-no-offline-queue="true">
+                <input type="hidden" name="action" value="update_admin_profile">
+                <label for="admin-display-name">Display Name</label>
+                <input id="admin-display-name" type="text" name="display_name" value="{{ current_admin_name }}" maxlength="120" autocomplete="name" required>
+                <label for="admin-login-username">Login Username</label>
+                <input id="admin-login-username" type="text" name="username" value="{{ current_user }}" minlength="3" maxlength="64" autocomplete="username" required>
+                <label for="admin-current-password">Current Password (required to save changes)</label>
+                <input id="admin-current-password" type="password" name="current_password" autocomplete="current-password" required>
+                <label for="admin-new-password">New Password (leave blank to keep current)</label>
+                <input id="admin-new-password" type="password" name="new_password" autocomplete="new-password">
+                <button type="submit" class="btn-success">Save Profile & Login</button>
+                <a href="#admin-profile-settings" id="admin-profile-settings-cancel">Cancel</a>
+            </form>
+        </div>
     </div>
 </div>
 <div class="grid"> 
