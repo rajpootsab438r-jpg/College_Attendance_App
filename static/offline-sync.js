@@ -216,7 +216,8 @@
           roll_no: attendance.roll,
           date: attendance.date,
           period: Number(attendance.period),
-          status: attendance.status
+          status: attendance.status,
+          client_timestamp: attendance.client_timestamp
         };
         if (match) {
           Object.assign(match, updatedRecord);
@@ -326,9 +327,68 @@
     };
     const id = await new Promise((resolve, reject) => {
       const transaction = database.transaction(storeName, 'readwrite');
-      const request = transaction.objectStore(storeName).add(entry);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('Could not save the offline change.'));
+      const store = transaction.objectStore(storeName);
+      let savedId;
+      if (tag === 'pending_attendance') {
+        let submitted;
+        try {
+          submitted = JSON.parse(body);
+        } catch (error) {
+          transaction.abort();
+          reject(new Error('Offline attendance must be valid JSON.'));
+          return;
+        }
+        const studentKey = submitted.student_id !== undefined && submitted.student_id !== null
+          ? `id:${String(submitted.student_id)}`
+          : submitted.roll ? `roll:${String(submitted.roll)}` : '';
+        if (!studentKey || !submitted.date || submitted.period === undefined || submitted.period === null) {
+          transaction.abort();
+          reject(new Error('Offline attendance is missing its student, date, or period.'));
+          return;
+        }
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const matches = request.result.filter(operation => {
+            if (operation.url !== path || operation.method !== 'POST' ||
+                operation.actor !== actor || operation.tag !== 'pending_attendance') return false;
+            try {
+              const queued = JSON.parse(operation.body);
+              const queuedStudentKey = queued.student_id !== undefined && queued.student_id !== null
+                ? `id:${String(queued.student_id)}`
+                : queued.roll ? `roll:${String(queued.roll)}` : '';
+              return queuedStudentKey === studentKey &&
+                String(queued.date) === String(submitted.date) &&
+                String(queued.period) === String(submitted.period);
+            } catch (error) {
+              return false;
+            }
+          }).sort((left, right) =>
+            String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
+          );
+
+          if (matches.length) {
+            savedId = matches[0].id;
+            store.put({ ...entry, id: savedId });
+            matches.slice(1).forEach(operation => store.delete(operation.id));
+          } else {
+            const addRequest = store.add(entry);
+            addRequest.onsuccess = () => {
+              savedId = addRequest.result;
+            };
+            addRequest.onerror = () => transaction.abort();
+          }
+        };
+        request.onerror = () => transaction.abort();
+      } else {
+        const request = store.add(entry);
+        request.onsuccess = () => {
+          savedId = request.result;
+        };
+        request.onerror = () => transaction.abort();
+      }
+      transaction.oncomplete = () => resolve(savedId);
+      transaction.onerror = () => reject(transaction.error || new Error('Could not save the offline change.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Offline change save was aborted.'));
     });
 
     const registration = await navigator.serviceWorker?.ready;

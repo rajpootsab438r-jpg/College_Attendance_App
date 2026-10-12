@@ -42,7 +42,12 @@ def setup_database():
                     }
                     if 'profile_image' not in columns:
                         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN profile_image TEXT")
-                conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, college_id INTEGER)")
+                conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, client_timestamp TEXT, college_id INTEGER)")
+                attendance_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(attendance)").fetchall()
+                }
+                if 'client_timestamp' not in attendance_columns:
+                    conn.execute("ALTER TABLE attendance ADD COLUMN client_timestamp TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Punjab College", "admin1", "pc123", 8))
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Superior College", "admin2", "sc123", 5))
@@ -102,10 +107,12 @@ def setup_database():
                     status TEXT,
                     marked_by TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    client_timestamp TEXT,
                     college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE,
                     FOREIGN KEY (student_roll, college_id) REFERENCES students(roll_no, college_id) ON DELETE CASCADE
                 )
                 """)
+                cursor.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS client_timestamp TEXT")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sync_operations (
                     operation_id TEXT PRIMARY KEY,

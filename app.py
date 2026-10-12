@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
-from datetime import datetime
+from datetime import datetime, timezone
 import io
 from urllib.request import Request, urlopen
 from urllib.error import URLError
@@ -359,6 +359,24 @@ def admin_request_value(values, key, required=False):
     if required and not value.strip():
         raise ValueError(f'{key.replace("_", " ").capitalize()} is required.')
     return value
+
+
+def parse_attendance_timestamp(value, *, require_timezone=False):
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        if require_timezone:
+            return None
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def ensure_database_initialized():
@@ -1391,6 +1409,17 @@ def quick_attendance():
     roll = data.get('roll')
     status = data.get('status') 
     att_date = data.get('date')
+    client_timestamp_value = data.get('client_timestamp', data.get('marked_at'))
+    client_timestamp = parse_attendance_timestamp(
+        client_timestamp_value,
+        require_timezone=True
+    )
+    if client_timestamp is None:
+        return sync_json_response(
+            'error', 400,
+            message='A valid timezone-aware client_timestamp is required.'
+        )
+    client_timestamp_db = client_timestamp.isoformat(timespec='microseconds')
     if not isinstance(roll, str) or not roll.strip():
         return sync_json_response('error', 400, message='A student roll number is required.')
     if status not in {'Present', 'Absent', 'Leave', 'Vacation'}:
@@ -1452,18 +1481,46 @@ def quick_attendance():
         conn.close()
         return sync_json_response('error', 404, message='Student not found in this college.')
     roll = student['roll_no']
-    cursor.execute('SELECT id FROM attendance WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s', (roll, att_date, period_no, college_id))
-    existing = cursor.fetchone()
-    
-    if existing: 
-        cursor.execute('UPDATE attendance SET status = %s, marked_by = %s, created_at = CURRENT_TIMESTAMP WHERE id = %s', (status, teacher_username, existing['id']))
-    else: 
-        cursor.execute('INSERT INTO attendance (student_roll, attendance_date, period_no, status, marked_by, college_id) VALUES (%s, %s, %s, %s, %s, %s)', (roll, att_date, period_no, status, teacher_username, college_id))
-        
+    cursor.execute(
+        'SELECT id, status, client_timestamp, created_at FROM attendance '
+        'WHERE student_roll = %s AND attendance_date = %s AND period_no = %s AND college_id = %s',
+        (roll, att_date, period_no, college_id)
+    )
+    existing_records = cursor.fetchall()
+    existing = max(
+        existing_records,
+        key=lambda record: parse_attendance_timestamp(
+            record['client_timestamp'] or record['created_at']
+        ) or datetime.min.replace(tzinfo=timezone.utc),
+        default=None
+    )
+    applied = True
+    current_status = status
+    if existing:
+        existing_timestamp = parse_attendance_timestamp(
+            existing['client_timestamp'] or existing['created_at']
+        )
+        if existing_timestamp is not None and client_timestamp <= existing_timestamp:
+            applied = False
+            current_status = existing['status']
+        else:
+            cursor.execute(
+                'UPDATE attendance SET status = %s, marked_by = %s, '
+                'created_at = CURRENT_TIMESTAMP, client_timestamp = %s WHERE id = %s',
+                (status, teacher_username, client_timestamp_db, existing['id'])
+            )
+    else:
+        cursor.execute(
+            'INSERT INTO attendance '
+            '(student_roll, attendance_date, period_no, status, marked_by, client_timestamp, college_id) '
+            'VALUES (%s, %s, %s, %s, %s, %s, %s)',
+            (roll, att_date, period_no, status, teacher_username, client_timestamp_db, college_id)
+        )
+
     conn.commit()
     conn.close()
-    response_payload = {'current_status': status}
-    if status == 'Absent' and att_date == datetime.today().strftime('%Y-%m-%d'):
+    response_payload = {'current_status': current_status, 'applied': applied}
+    if applied and status == 'Absent' and att_date == datetime.today().strftime('%Y-%m-%d'):
         alert_payload = build_whatsapp_absence_payload(
             student, period_no, att_date, college_id
         )

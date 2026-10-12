@@ -93,13 +93,14 @@
             badge.textContent = labels[targetStatus][1];
             statusCell.appendChild(badge);
             try {
+                const clientTimestamp = new Date().toISOString();
                 const body = JSON.stringify({
                     roll: studentRoll,
                     student_id: studentId,
                     status: targetStatus,
                     date: selectedDate,
                     period: selectedPeriod,
-                    marked_at: new Date().toISOString()
+                    client_timestamp: clientTimestamp
                 });
                 const result = await window.OfflineSync.sendOrQueue(
                     '/teacher/quick_attendance',
@@ -112,7 +113,8 @@
                     roll: studentRoll,
                     status: targetStatus,
                     date: selectedDate,
-                    period: selectedPeriod
+                    period: selectedPeriod,
+                    client_timestamp: clientTimestamp
                 });
                 badge.textContent = labels[targetStatus][1] + (result.queued ? ' ⏳' : '');
                 if (result.queued) {
