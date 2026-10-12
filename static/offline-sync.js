@@ -449,15 +449,18 @@
 
       event.preventDefault();
       const submitter = event.submitter;
-      const formData = new FormData(form);
-      if (submitter?.name) {
-        formData.append(submitter.name, submitter.value);
-      }
-      const body = new URLSearchParams(formData);
       const button = submitter instanceof HTMLButtonElement ? submitter : form.querySelector('button[type="submit"], button:not([type])');
       if (button) button.disabled = true;
 
       try {
+        if (window.ProfileImageSerialization) {
+          await window.ProfileImageSerialization.prepare(form);
+        }
+        const formData = new FormData(form);
+        if (submitter?.name) {
+          formData.append(submitter.name, submitter.value);
+        }
+        const body = new URLSearchParams(formData);
         const result = await sendOrQueue(endpointPath, body.toString(), 'application/x-www-form-urlencoded;charset=UTF-8', actionTag(formData, new URL(endpointPath, location.origin).pathname));
         if (result.queued) {
           updatePendingCount('Saved on this device. It will sync automatically when the connection returns and this account is authenticated.');

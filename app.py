@@ -2,6 +2,9 @@ import os
 import sqlite3
 import threading
 import json
+import base64
+import binascii
+import uuid
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
@@ -71,6 +74,9 @@ class SQLiteCompatConnection:
 app = Flask(__name__)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(PROJECT_DIR, "static")
+PROFILE_IMAGE_DIR = os.path.join(STATIC_DIR, "uploads", "profile-images")
+PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024
 # 🏷️ Branded core security token signature context mapped to Çukur Systems
 app.secret_key = os.environ.get("SECRET_KEY", "attendance_cukur_secret_key_123")
 
@@ -299,6 +305,60 @@ def begin_sync_operation(cursor):
         (operation_id,)
     )
     return cursor.rowcount == 0
+
+
+def save_profile_image(data_url):
+    if not data_url:
+        return None
+    if not isinstance(data_url, str):
+        raise ValueError('Profile image must be a Base64 data URL.')
+
+    header, separator, encoded = data_url.partition(',')
+    allowed_types = {
+        'data:image/jpeg;base64': ('.jpg', lambda content: content.startswith(b'\xff\xd8\xff')),
+        'data:image/png;base64': ('.png', lambda content: content.startswith(b'\x89PNG\r\n\x1a\n')),
+        'data:image/webp;base64': (
+            '.webp',
+            lambda content: content.startswith(b'RIFF') and content[8:12] == b'WEBP'
+        )
+    }
+    if not separator or header not in allowed_types or not encoded:
+        raise ValueError('Profile image must be a JPEG, PNG, or WebP Base64 data URL.')
+    if len(encoded) > ((PROFILE_IMAGE_MAX_BYTES + 2) // 3) * 4:
+        raise ValueError('Profile image must be 2 MB or smaller.')
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError('Profile image contains invalid Base64 data.') from error
+    if not image_bytes or len(image_bytes) > PROFILE_IMAGE_MAX_BYTES:
+        raise ValueError('Profile image must be between 1 byte and 2 MB.')
+
+    extension, matches_signature = allowed_types[header]
+    if not matches_signature(image_bytes):
+        raise ValueError('Profile image content does not match its declared image type.')
+
+    os.makedirs(PROFILE_IMAGE_DIR, exist_ok=True)
+    filename = f'{uuid.uuid4().hex}{extension}'
+    path = os.path.join(PROFILE_IMAGE_DIR, filename)
+    with open(path, 'xb') as image_file:
+        image_file.write(image_bytes)
+    return f'/static/uploads/profile-images/{filename}'
+
+
+def remove_profile_image(image_url):
+    if image_url:
+        path = os.path.join(PROFILE_IMAGE_DIR, os.path.basename(image_url))
+        if os.path.isfile(path):
+            os.remove(path)
+
+
+def admin_request_value(values, key, required=False):
+    value = values.get(key, '')
+    if not isinstance(value, str):
+        raise ValueError(f'{key.replace("_", " ").capitalize()} must be text.')
+    if required and not value.strip():
+        raise ValueError(f'{key.replace("_", " ").capitalize()} is required.')
+    return value
 
 
 def ensure_database_initialized():
@@ -547,7 +607,11 @@ def admin_dashboard():
     cursor = conn.cursor()
     
     if request.method == 'POST':
-        action = request.form.get('action')
+        request_values = request.form
+        json_values = request.get_json(silent=True)
+        if not request_values and isinstance(json_values, dict):
+            request_values = json_values
+        action = request_values.get('action')
         mutation_actions = {
             'change_username', 'add_teacher', 'add_student', 'edit_teacher_admin',
             'edit_student_admin', 'delete_teacher', 'delete_student'
@@ -572,13 +636,60 @@ def admin_dashboard():
             session['user'] = new_user
             current_username = new_user
         elif action == 'add_teacher':
-            cursor.execute('INSERT INTO teachers (teacher_id, name, username, password, subject, college_id) VALUES (%s, %s, %s, %s, %s, %s)',
-                         (request.form.get('teacher_id', ''), request.form['name'], request.form['username'], request.form['password'], request.form.get('subject', ''), college_id))
-            conn.commit()
+            profile_image = None
+            try:
+                teacher_id = admin_request_value(request_values, 'teacher_id')
+                name = admin_request_value(request_values, 'name', required=True)
+                username = admin_request_value(request_values, 'username', required=True)
+                password = admin_request_value(request_values, 'password', required=True)
+                subject = admin_request_value(request_values, 'subject')
+                profile_image = save_profile_image(
+                    admin_request_value(request_values, 'profile_image_data')
+                )
+                cursor.execute(
+                    'INSERT INTO teachers (teacher_id, name, username, password, subject, profile_image, college_id) '
+                    'VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                    (teacher_id, name, username, password, subject, profile_image, college_id)
+                )
+                conn.commit()
+            except ValueError as error:
+                conn.rollback()
+                remove_profile_image(profile_image)
+                conn.close()
+                return sync_json_response('error', 400, message=str(error))
+            except Exception:
+                conn.rollback()
+                remove_profile_image(profile_image)
+                conn.close()
+                raise
         elif action == 'add_student':
-            cursor.execute('INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], request.form.get('phone_number', ''), request.form['program'], request.form['part'], college_id))
-            conn.commit()
+            profile_image = None
+            try:
+                roll_no = admin_request_value(request_values, 'roll_no', required=True)
+                student_name = admin_request_value(request_values, 'student_name', required=True)
+                father_name = admin_request_value(request_values, 'father_name', required=True)
+                phone_number = admin_request_value(request_values, 'phone_number')
+                program = admin_request_value(request_values, 'program', required=True)
+                part = admin_request_value(request_values, 'part', required=True)
+                profile_image = save_profile_image(
+                    admin_request_value(request_values, 'profile_image_data')
+                )
+                cursor.execute(
+                    'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, profile_image, college_id) '
+                    'VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                    (roll_no, student_name, father_name, phone_number, program, part, profile_image, college_id)
+                )
+                conn.commit()
+            except ValueError as error:
+                conn.rollback()
+                remove_profile_image(profile_image)
+                conn.close()
+                return sync_json_response('error', 400, message=str(error))
+            except Exception:
+                conn.rollback()
+                remove_profile_image(profile_image)
+                conn.close()
+                raise
         elif action == 'edit_teacher_admin':
             # 🛠️ FIXED 100% OPTIONAL: Teacher details ko edit karte waqt optional values khali chordne par system null strings handle karega
             t_id_val = request.form.get('teacher_id', '').strip()

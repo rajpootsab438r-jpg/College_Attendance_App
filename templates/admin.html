@@ -93,6 +93,8 @@
         .analytics-empty { color: #64748b; font-size: 13px; margin: 0; }
         .bunk-alert { padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #9f1239; font-size: 13px; }
         .bunk-alert strong { display: block; margin-bottom: 4px; }
+        .profile-image-preview { display: block; width: 96px; height: 96px; margin: 8px 0; border-radius: 50%; object-fit: cover; border: 2px solid #d1e7dd; }
+        .profile-image-status { min-height: 1.2em; color: #64748b; font-size: 12px; }
     </style> 
     <script> 
         function togglePassword(id) { 
@@ -223,6 +225,11 @@
                 <input type="hidden" name="action" value="add_teacher">
                 <input type="text" name="teacher_id" placeholder="{% if current_lang == 'ur' %}ٹیچر آئی ڈی (اختیاری){% else %}Teacher ID (Optional){% endif %}" autocomplete="off">
                 <input type="text" name="name" placeholder="{% if current_lang == 'ur' %}ٹیچر کا نام{% else %}Teacher Name{% endif %}" autocomplete="off" required>
+                <label for="teacher-profile-image">Profile photo (optional)</label>
+                <input id="teacher-profile-image" type="file" accept="image/jpeg,image/png,image/webp" capture="user" data-profile-image>
+                <input type="hidden" name="profile_image_data" data-profile-image-data>
+                <img class="profile-image-preview" data-profile-image-preview alt="Teacher profile photo preview" hidden>
+                <p class="profile-image-status" data-profile-image-status role="status" aria-live="polite"></p>
                 <input type="text" name="username" placeholder="{% if current_lang == 'ur' %}لاگ ان یوزر نیم{% else %}Login Username{% endif %}" autocomplete="off" required>
                 <div class="password-container">
                     <input type="password" id="add_teacher_password" name="password" placeholder="{% if current_lang == 'ur' %}لاگ ان پاس ورڈ{% else %}Login Password{% endif %}" autocomplete="off" required>
@@ -243,6 +250,11 @@
                 <input type="hidden" name="action" value="add_student">
                 <input type="text" name="roll_no" placeholder="{% if current_lang == 'ur' %}رول نمبر{% else %}Roll Number{% endif %}" autocomplete="off" required>
                 <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required>
+                <label for="student-profile-image">Profile photo (optional)</label>
+                <input id="student-profile-image" type="file" accept="image/jpeg,image/png,image/webp" capture="user" data-profile-image>
+                <input type="hidden" name="profile_image_data" data-profile-image-data>
+                <img class="profile-image-preview" data-profile-image-preview alt="Student profile photo preview" hidden>
+                <p class="profile-image-status" data-profile-image-status role="status" aria-live="polite"></p>
                 <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required>
                 <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off">
                 <select name="program" required>
@@ -394,6 +406,81 @@
         </tbody> 
     </table>
 </div>
+<script>
+  (function() {
+    const maxImageBytes = 2 * 1024 * 1024;
+    const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    const pendingReads = new WeakMap();
+
+    function serializeImage(input) {
+      const file = input.files && input.files[0];
+      const form = input.form;
+      const dataField = form && form.querySelector('[data-profile-image-data]');
+      const preview = form && form.querySelector('[data-profile-image-preview]');
+      const status = form && form.querySelector('[data-profile-image-status]');
+      if (!file || !dataField || !preview || !status) return Promise.resolve('');
+
+      dataField.value = '';
+      preview.removeAttribute('src');
+      preview.hidden = true;
+      input.setCustomValidity('');
+      if (!allowedImageTypes.has(file.type)) {
+        input.setCustomValidity('Choose a JPEG, PNG, or WebP image.');
+        status.textContent = 'Choose a JPEG, PNG, or WebP image.';
+        return Promise.reject(new Error(status.textContent));
+      }
+      if (file.size > maxImageBytes) {
+        input.setCustomValidity('Profile photos must be 2 MB or smaller.');
+        status.textContent = 'Profile photos must be 2 MB or smaller.';
+        return Promise.reject(new Error(status.textContent));
+      }
+
+      const read = new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result !== 'string' || !reader.result.startsWith(`data:${file.type};base64,`)) {
+            reject(new Error('The selected photo could not be serialized.'));
+            return;
+          }
+          dataField.value = reader.result;
+          preview.src = reader.result;
+          preview.hidden = false;
+          status.textContent = navigator.onLine
+            ? 'Photo ready to upload.'
+            : 'Photo saved on this device and ready to sync when online.';
+          resolve(reader.result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Could not read the selected photo.'));
+        reader.readAsDataURL(file);
+      }).catch(error => {
+        input.setCustomValidity(error.message);
+        status.textContent = error.message;
+        throw error;
+      });
+      pendingReads.set(input, read);
+      return read;
+    }
+
+    document.querySelectorAll('[data-profile-image]').forEach(input => {
+      input.addEventListener('change', () => {
+        serializeImage(input).catch(() => {});
+      });
+    });
+
+    window.ProfileImageSerialization = {
+      async prepare(form) {
+        for (const input of form.querySelectorAll('[data-profile-image]')) {
+          if (!input.files || !input.files[0]) continue;
+          const dataField = form.querySelector('[data-profile-image-data]');
+          if (!dataField || !dataField.value) {
+            const pending = pendingReads.get(input);
+            await (pending || serializeImage(input));
+          }
+        }
+      }
+    };
+  })();
+</script>
 <script src="/static/offline-sync.js"></script>
 <script>
   (function() {

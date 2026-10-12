@@ -1,4 +1,4 @@
-const CACHE_NAME = 'college-attendance-v11';
+const CACHE_NAME = 'college-attendance-v12';
 const CACHE_PREFIX = 'college-attendance-';
 const OFFLINE_URL = '/offline';
 const SYNC_TAG = 'sync-cukur-data';
@@ -330,6 +330,9 @@ async function runQueue() {
         }
 
         const queuePath = new URL(operation.url, self.location.origin);
+        if (typeof operation.body !== 'string' || typeof operation.contentType !== 'string') {
+          throw new Error('A queued action has an invalid request body; pending data was retained.');
+        }
         const response = await fetch(queuePath.pathname + queuePath.search, {
           method: 'POST',
           credentials: 'include',

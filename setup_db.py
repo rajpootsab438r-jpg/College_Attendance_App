@@ -33,8 +33,15 @@ def setup_database():
         try:
             with conn:
                 conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
-                conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, college_id INTEGER, UNIQUE(teacher_id, college_id))")
-                conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, college_id INTEGER, UNIQUE(roll_no, college_id))")
+                conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(teacher_id, college_id))")
+                conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(roll_no, college_id))")
+                for table_name in ('teachers', 'students'):
+                    columns = {
+                        row[1] for row in
+                        conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+                    }
+                    if 'profile_image' not in columns:
+                        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN profile_image TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, college_id INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, username, password, total_periods) VALUES (?, ?, ?, ?)", ("Punjab College", "admin1", "pc123", 8))
@@ -65,10 +72,12 @@ def setup_database():
                     username TEXT UNIQUE NOT NULL,
                     password TEXT NOT NULL,
                     subject TEXT NOT NULL,
+                    profile_image TEXT,
                     college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE,
                     UNIQUE(teacher_id, college_id)
                 )
                 """)
+                cursor.execute("ALTER TABLE teachers ADD COLUMN IF NOT EXISTS profile_image TEXT")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS students (
                     id SERIAL PRIMARY KEY,
@@ -78,10 +87,12 @@ def setup_database():
                     phone_number TEXT NOT NULL,
                     program TEXT NOT NULL,
                     part TEXT NOT NULL,
+                    profile_image TEXT,
                     college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE,
                     UNIQUE(roll_no, college_id)
                 )
                 """)
+                cursor.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_image TEXT")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS attendance (
                     id SERIAL PRIMARY KEY,
