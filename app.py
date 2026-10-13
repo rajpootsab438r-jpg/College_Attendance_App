@@ -412,8 +412,14 @@ _WHATSAPP_CLASS_PATTERN = (
 )
 WHATSAPP_CONTEXT_PATTERN = re.compile(
     rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
-    r'(?:(?:part|semester|sem)\s*[- ]*|[- ]*)'
-    r'(?P<part>\d+)\s*(?:roll\s*(?:no\.?\s*)?)?'
+    r'(?:(?P<part_type>part|semester|sem)\s*[- ]*|[- ]*)'
+    r'(?P<part>\d+)\s+(?:roll\s*(?:no\.?\s*)?)?'
+    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)\b'
+)
+WHATSAPP_ROLL_ONLY_PATTERN = re.compile(
+    rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
+    r'(?:(?:part|semester|sem)\s*)?'
+    r'(?:roll\s*(?:no\.?\s*)?)?'
     r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)\b'
 )
 WHATSAPP_INTENT_PATTERN = re.compile(r'\b(report|attendance|status)\b', re.IGNORECASE)
@@ -470,6 +476,10 @@ def extract_meta_whatsapp_messages(payload):
 def parse_whatsapp_context(message):
     text_clean = message.lower().strip()
     match = WHATSAPP_CONTEXT_PATTERN.search(text_clean)
+    part = match.group('part') if match else None
+    part_type = match.group('part_type') if match else None
+    if not match:
+        match = WHATSAPP_ROLL_ONLY_PATTERN.search(text_clean)
     if not match:
         return None
     class_text = re.sub(r'\s+', ' ', match.group('class').replace('.', ' ')).strip()
@@ -485,7 +495,8 @@ def parse_whatsapp_context(message):
         return None
     return {
         'program': program,
-        'part': match.group('part'),
+        'part': part,
+        'part_type': 'part' if part_type in (None, 'part') else 'semester',
         'roll': str(int(match.group('roll'))),
         'intent': match.group('intent').lower()
     }
@@ -510,11 +521,15 @@ def find_whatsapp_student(cursor, sender, context):
             'AND roll_no = %s',
             (normalized_program, context['roll'])
         )
-        students = [
-            student for student in cursor.fetchall()
-            if normalized_whatsapp_part(student['part']) ==
-            normalized_whatsapp_part('Part-' + context['part'])
-        ]
+        students = cursor.fetchall()
+        if context['part'] is not None:
+            expected_part = normalized_whatsapp_part(
+                context['part_type'] + context['part']
+            )
+            students = [
+                student for student in students
+                if normalized_whatsapp_part(student['part']) == expected_part
+            ]
         return students[0] if len(students) == 1 else None
 
     normalized_sender = normalized_whatsapp_phone(sender)

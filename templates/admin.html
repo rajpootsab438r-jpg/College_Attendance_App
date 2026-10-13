@@ -327,8 +327,6 @@
         <p id="whatsapp-configuration-status" role="status">
             {% if whatsapp_configured %}
                 ✅ WhatsApp Messaging is Configured &amp; Active
-            {% else %}
-                WhatsApp messaging is not configured.
             {% endif %}
         </p>
         <form id="admin-broadcast-form" action="/admin/broadcast_message" method="POST" data-no-offline-queue="true">
