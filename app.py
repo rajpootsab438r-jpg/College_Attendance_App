@@ -668,10 +668,9 @@ def dispatch_meta_whatsapp_message(recipient, message):
         },
         json={
             'messaging_product': 'whatsapp',
-            'recipient_type': 'individual',
             'to': recipient,
             'type': 'text',
-            'text': {'preview_url': False, 'body': message}
+            'text': {'body': message}
         },
         timeout=(3.05, 10)
     )
