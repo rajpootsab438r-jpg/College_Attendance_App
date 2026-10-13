@@ -490,10 +490,11 @@ def extract_meta_whatsapp_messages(payload):
                     list_id = (
                         list_reply.get('id') if isinstance(list_reply, dict) else None
                     )
+                has_text_message = message_type == 'text' and isinstance(text, str)
                 if (
                     isinstance(sender, str) and sender.strip() and
                     (
-                        (isinstance(text, str) and text.strip()) or
+                        has_text_message or
                         (isinstance(button_id, str) and button_id.strip()) or
                         (isinstance(list_id, str) and list_id.strip())
                     )
@@ -724,6 +725,17 @@ def dispatch_meta_whatsapp_menu(recipient):
     response.raise_for_status()
 
 
+def dispatch_meta_plain_text_menu(recipient):
+    dispatch_meta_whatsapp_message(
+        recipient,
+        'Assalamu Alaikum! CAS Portal Intelligent AI Assistant mein khush-amdeed.\n\n'
+        'Apni academic program stream select karne ke liye ginti ka number '
+        '(1 ya 2) reply mein bheinjein:\n'
+        '1. 🏫 Intermediate Programs\n'
+        '2. 🎓 BS Degrees & Diplomas'
+    )
+
+
 def dispatch_meta_whatsapp_list(recipient, header, body, rows):
     access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
     response = requests.post(
@@ -880,10 +892,14 @@ def whatsapp_webhook():
         challenge = request.args.get('hub.challenge', '')
         return str(challenge), 200
 
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return '', 400
-    messages = extract_meta_whatsapp_messages(payload)
+    try:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return '', 200
+        messages = extract_meta_whatsapp_messages(payload)
+    except (AttributeError, IndexError, TypeError, KeyError):
+        app.logger.warning('Ignoring malformed Meta WhatsApp webhook payload.')
+        return '', 200
     if not messages:
         # Meta also sends status-only webhook events; acknowledge without replying.
         return '', 200
@@ -893,27 +909,34 @@ def whatsapp_webhook():
         cursor = None
         for sender, text, button_id, list_id in messages:
             text_clean = text.lower().strip()
-            if WHATSAPP_LIST_TRIGGER_PATTERN.fullmatch(text_clean):
-                dispatch_meta_whatsapp_menu(sender)
-                continue
             if button_id in WHATSAPP_BUTTON_REPLIES:
                 dispatch_meta_whatsapp_message(sender, WHATSAPP_BUTTON_REPLIES[button_id])
                 continue
             if button_id in WHATSAPP_STREAM_BUTTONS:
                 dispatch_meta_program_list(sender, WHATSAPP_STREAM_BUTTONS[button_id])
                 continue
+            if WHATSAPP_LIST_TRIGGER_PATTERN.fullmatch(text_clean):
+                stream = 'intermediate' if text_clean == '1' else 'bs'
+                dispatch_meta_program_list(sender, stream)
+                continue
             if WHATSAPP_MENU_TRIGGER_PATTERN.search(text_clean):
-                dispatch_meta_whatsapp_menu(sender)
+                dispatch_meta_plain_text_menu(sender)
                 continue
             if list_id in WHATSAPP_CLASS_SELECTION_IDS:
                 dispatch_meta_whatsapp_message(
                     sender, WHATSAPP_PROGRAM_SELECTION_REPLY
                 )
                 continue
+            if list_id:
+                dispatch_meta_plain_text_menu(sender)
+                continue
 
             context = parse_whatsapp_context(text_clean)
             if context is None:
                 context = parse_whatsapp_roll_context(text_clean)
+            if context is None:
+                dispatch_meta_plain_text_menu(sender)
+                continue
             intent = context['intent'] if context else None
             if conn is None:
                 conn = get_db_connection()
