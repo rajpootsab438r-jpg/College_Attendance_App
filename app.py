@@ -1030,6 +1030,10 @@ def admin_dashboard():
     college_name = session.get('college_name')
     current_admin_name = session.get('admin_name', college_name)
     current_lang = session.get('lang', 'en')
+    whatsapp_configured = bool(
+        os.environ.get('META_ACCESS_TOKEN', '').strip()
+        and os.environ.get('META_PHONE_NUMBER_ID', '').strip()
+    )
     
     selected_program = request.args.get('program', '')
     selected_part = request.args.get('part', '')
@@ -1281,6 +1285,7 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_admin_name=current_admin_name, current_lang=current_lang,
+                           whatsapp_configured=whatsapp_configured,
                            academic_programs=academic_programs, academic_parts=academic_parts,
                            academic_sections=academic_sections, csrf_token=csrf_token,
                            edit_teacher=edit_teacher_data, edit_student=edit_student_data)

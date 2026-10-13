@@ -324,6 +324,13 @@
 <div class="grid" style="margin-bottom:20px;">
     <section class="card full-width">
         <h3>🚨 Mass Broadcast WhatsApp Notification Center</h3>
+        <p id="whatsapp-configuration-status" role="status">
+            {% if whatsapp_configured %}
+                ✅ WhatsApp Messaging is Configured &amp; Active
+            {% else %}
+                WhatsApp messaging is not configured.
+            {% endif %}
+        </p>
         <form id="admin-broadcast-form" action="/admin/broadcast_message" method="POST" data-no-offline-queue="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label for="broadcast-announcement">Announcement for parents (up to 4,096 characters)</label>
