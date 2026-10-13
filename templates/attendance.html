@@ -278,31 +278,23 @@
         <form id="attendance-setup-form" method="GET" action="/teacher/dashboard" class="setup-form">
             <select name="program" id="attendance-program" required>
                 <option value="">{% if current_lang == 'ur' %}-- پروگرام منتخب کریں --{% else %}-- Select Program --{% endif %}</option>
-                <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option>
-                <option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option>
-                <option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option>
-                <option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option>
-                <option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option>
-                <option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option>
-                <option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option>
-                <option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option>
-                <option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option>
-                <option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option>
-                <option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option>
+                {% for program_config in academic_programs %}
+                <option value="{{ program_config.key }}" {% if selected_program|lower|replace('-', '')|replace(' ', '')|replace('.', '') == program_config.key|lower|replace('-', '')|replace(' ', '')|replace('.', '') %}selected{% endif %}>{{ program_config.display_name }}</option>
+                {% endfor %}
             </select>
 
             <select name="part" id="attendance-part" required>
                 <option value="">{% if current_lang == 'ur' %}-- سمسٹر منتخب کریں --{% else %}-- Select Part / Semester --{% endif %}</option>
-                <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option>
-                <option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option>
-                <option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option>
-                <option value="Semester-2" {% if selected_part == 'Semester-2' %}selected{% endif %}>Semester-2</option>
-                <option value="Semester-3" {% if selected_part == 'Semester-3' %}selected{% endif %}>Semester-3</option>
-                <option value="Semester-4" {% if selected_part == 'Semester-4' %}selected{% endif %}>Semester-4</option>
-                <option value="Semester-5" {% if selected_part == 'Semester-5' %}selected{% endif %}>Semester-5</option>
-                <option value="Semester-6" {% if selected_part == 'Semester-6' %}selected{% endif %}>Semester-6</option>
-                <option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option>
-                <option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option>
+                {% for academic_part in academic_parts %}
+                <option value="{{ academic_part }}" {% if selected_part|lower == academic_part|lower %}selected{% endif %}>{{ academic_part }}</option>
+                {% endfor %}
+            </select>
+
+            <select name="section" id="attendance-section">
+                <option value="">{% if current_lang == 'ur' %}-- تمام سیکشنز --{% else %}-- All Sections --{% endif %}</option>
+                {% for academic_section in academic_sections %}
+                <option value="{{ academic_section }}" {% if selected_section|upper == academic_section %}selected{% endif %}>Section {{ academic_section }}</option>
+                {% endfor %}
             </select>
             
             <input type="date" id="global_date" name="attendance_date" value="{{ selected_date }}" required>
@@ -316,7 +308,7 @@
     </div>
     <div class="card" id="attendance-results" style="overflow-x: auto;" {% if not selected_program or not selected_part %}hidden{% endif %}>
         <div class="info-bar" id="attendance-filter-status">
-            {% if current_lang == 'ur' %}📍 منتخب کلاس: {{ selected_program }} ({{ selected_part }}) | 📅 تاریخ: {{ selected_date }} | ⏱️ پیریڈ: {{ selected_period }}{% else %}📍 Selected: {{ selected_program }} ({{ selected_part }}) | 📅 Date: {{ selected_date }} | ⏱️ Period: {{ selected_period }}{% endif %}
+            {% if current_lang == 'ur' %}📍 منتخب کلاس: {{ selected_program }} ({{ selected_part }}){% if selected_section %} | سیکشن {{ selected_section }}{% endif %} | 📅 تاریخ: {{ selected_date }} | ⏱️ پیریڈ: {{ selected_period }}{% else %}📍 Selected: {{ selected_program }} ({{ selected_part }}){% if selected_section %} · Section {{ selected_section }}{% endif %} | 📅 Date: {{ selected_date }} | ⏱️ Period: {{ selected_period }}{% endif %}
         </div>
         <p id="attendance-filter-message" role="status" aria-live="polite"></p>
         
@@ -326,6 +318,7 @@
                     <th>{% if current_lang == 'ur' %}رول نمبر{% else %}Roll No{% endif %}</th>
                     <th>{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}</th>
                     <th>{% if current_lang == 'ur' %}والد کا نام{% else %}Father's Name{% endif %}</th>
+                    <th>{% if current_lang == 'ur' %}سیکشن{% else %}Section{% endif %}</th>
                     <th>{% if current_lang == 'ur' %}موجودہ اسٹیٹس{% else %}Current Status{% endif %}</th>
                     <th>{% if current_lang == 'ur' %}حاضری کے بٹن{% else %}Actions{% endif %}</th>
                 </tr>
@@ -336,6 +329,7 @@
                     <td><b>{{ student.roll_no }}</b></td>
                     <td>{{ student.student_name }}</td>
                     <td>{{ student.father_name }}</td>
+                    <td>{{ student.section or 'A' }}</td>
                     <td id="status-box-{{ student.roll_no }}">
                         {% if student.saved_status == 'Present' %}
                             <span class="badge-present">{% if current_lang == 'ur' %}حاضر ✅{% else %}Present ✅{% endif %}</span>
@@ -370,6 +364,7 @@
     const form = document.getElementById('attendance-setup-form');
     const programSelect = document.getElementById('attendance-program');
     const partSelect = document.getElementById('attendance-part');
+    const sectionSelect = document.getElementById('attendance-section');
     const dateInput = document.getElementById('global_date');
     const periodSelect = document.getElementById('global_period');
     const results = document.getElementById('attendance-results');
@@ -381,7 +376,7 @@
     const actor = document.body.dataset.offlineActor;
     const isUrdu = "{{ 'true' if current_lang == 'ur' else 'false' }}" === 'true';
     function snapshotKey() {
-      return `teacher-attendance:${actor}:${programSelect.value}:${partSelect.value}:${dateInput.value}:${periodSelect.value}`;
+      return `teacher-attendance:${actor}:${programSelect.value}:${partSelect.value}:${sectionSelect.value}:${dateInput.value}:${periodSelect.value}`;
     }
 
     function escapeHtml(value) {
@@ -411,6 +406,7 @@
           roll_no: String(roll),
           student_name: String(name),
           father_name: String(student.father_name ?? ''),
+          section: String(student.section ?? 'A'),
           saved_status: String(student.saved_status ?? '')
         };
       });
@@ -422,7 +418,7 @@
         return;
       }
       tableBody.innerHTML = '';
-      tableBody.innerHTML = `<tr><td colspan="5" role="status">${escapeHtml(text)}</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="6" role="status">${escapeHtml(text)}</td></tr>`;
       table.hidden = false;
       emptyState.hidden = true;
     }
@@ -443,6 +439,7 @@
             <td><b>${roll}</b></td>
             <td>${escapeHtml(student.student_name)}</td>
             <td>${escapeHtml(student.father_name || '-')}</td>
+            <td>${escapeHtml(student.section || 'A')}</td>
             <td id="status-box-${roll}">${badge}</td>
             <td><div class="action-container">
               <button type="button" name="status" value="Present" data-student-id="${studentId}" data-roll="${roll}" data-status="Present" class="btn-action-p">${isUrdu ? 'حاضر' : 'Present'}</button>
@@ -470,7 +467,14 @@
       Vacation: ['badge-vacation', isUrdu ? 'تعطیل 🏖️' : 'Vacation 🏖️']
     };
 
-    let offlineSeed = null;
+    let offlineSeed = {
+      programs: {{ academic_programs|tojson }}.map(program => ({
+        name: program.key,
+        display_name: program.display_name,
+        parts: program.parts,
+        sections: program.sections
+      }))
+    };
     function replaceOptions(select, placeholder, values, selectedValue) {
       select.replaceChildren(new Option(placeholder, ''));
       values.forEach(value => select.add(new Option(value, value)));
@@ -491,17 +495,32 @@
       );
     }
 
+    function populateSections(program, selectedSection) {
+      const programData = offlineSeed?.programs.find(item => item.name === program);
+      const sections = programData ? programData.sections : [];
+      sectionSelect.replaceChildren(
+        new Option(isUrdu ? '-- تمام سیکشنز --' : '-- All Sections --', '')
+      );
+      sections.forEach(section => sectionSelect.add(new Option(`Section ${section}`, section)));
+      if (sections.includes(selectedSection)) sectionSelect.value = selectedSection;
+    }
+
     function populateFilters(seed) {
-      offlineSeed = seed;
+      offlineSeed = {...seed, programs: offlineSeed.programs};
       const selectedProgram = programSelect.value;
       const selectedPart = partSelect.value;
-      replaceOptions(
-        programSelect,
-        isUrdu ? '-- پروگرام منتخب کریں --' : '-- Select Program --',
-        seed.programs.map(item => item.name),
-        selectedProgram
+      const selectedSection = sectionSelect.value;
+      programSelect.replaceChildren(
+        new Option(isUrdu ? '-- پروگرام منتخب کریں --' : '-- Select Program --', '')
       );
+      offlineSeed.programs.forEach(program => {
+        programSelect.add(new Option(program.display_name || program.name, program.name));
+      });
+      if (offlineSeed.programs.some(program => program.name === selectedProgram)) {
+        programSelect.value = selectedProgram;
+      }
       populateParts(programSelect.value, selectedPart);
+      populateSections(programSelect.value, selectedSection);
       const selectedPeriod = periodSelect.value;
       periodSelect.replaceChildren();
       seed.periods.forEach(period => {
@@ -520,12 +539,13 @@
       const sequence = ++refreshSequence;
       const program = programSelect.value;
       const part = partSelect.value;
+      const section = sectionSelect.value;
       const date = dateInput.value;
       const period = periodSelect.value;
       results.hidden = !program || !part;
       filterStatus.textContent = isUrdu
-        ? `📍 منتخب کلاس: ${program} (${part}) | 📅 تاریخ: ${date} | ⏱️ پیریڈ: ${period}`
-        : `📍 Selected: ${program} (${part}) | 📅 Date: ${date} | ⏱️ Period: ${period}`;
+        ? `📍 منتخب کلاس: ${program} (${part})${section ? ` | سیکشن ${section}` : ''} | 📅 تاریخ: ${date} | ⏱️ پیریڈ: ${period}`
+        : `📍 Selected: ${program} (${part})${section ? ` · Section ${section}` : ''} | 📅 Date: ${date} | ⏱️ Period: ${period}`;
       message.textContent = '';
       if (!program || !part) {
         tableBody.innerHTML = '';
@@ -541,6 +561,7 @@
             format: 'json',
             program,
             part,
+            section,
             attendance_date: date,
             period_no: period
           });
@@ -568,7 +589,7 @@
 
       try {
         const seededStudents = await window.OfflineSync.getSeededStudents(
-          program, part, date, period
+          program, part, section, date, period
         );
         if (sequence !== refreshSequence) return;
         if (seededStudents !== null) {
@@ -594,7 +615,7 @@
       }
     }
 
-    if (!form || !programSelect || !partSelect || !dateInput || !periodSelect ||
+    if (!form || !programSelect || !partSelect || !sectionSelect || !dateInput || !periodSelect ||
         !results || !table || !tableBody || !emptyState || !filterStatus || !message ||
         !window.OfflineSync) {
       renderFallback('The attendance filter could not be initialized. Reload the page and try again.');
@@ -603,8 +624,9 @@
 
     programSelect.addEventListener('change', () => {
       populateParts(programSelect.value, '');
+      populateSections(programSelect.value, '');
     });
-    [programSelect, partSelect, dateInput, periodSelect].forEach(control => {
+    [programSelect, partSelect, sectionSelect, dateInput, periodSelect].forEach(control => {
       control.addEventListener('change', event => {
         event.preventDefault();
         refreshStudents();
@@ -618,6 +640,7 @@
 
     const initialStudents = {{ students|tojson }};
     if (programSelect.value && partSelect.value) {
+      populateSections(programSelect.value, sectionSelect.value);
       renderStudents(initialStudents);
       window.OfflineSync.saveSnapshot(snapshotKey(), initialStudents).catch(error => {
         message.textContent = error instanceof Error ? error.message : 'Could not save this attendance list for offline use.';

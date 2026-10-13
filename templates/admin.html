@@ -321,6 +321,23 @@
     </article>
 </section>
 
+<div class="grid" style="margin-bottom:20px;">
+    <section class="card full-width">
+        <h3>🚨 Mass Broadcast WhatsApp Notification Center</h3>
+        <form id="admin-broadcast-form" action="/admin/broadcast_message" method="POST" data-no-offline-queue="true">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="broadcast-announcement">Announcement for parents (up to 4,096 characters)</label>
+            <textarea id="broadcast-announcement" name="announcement" rows="5" maxlength="4096"
+                style="width:100%;box-sizing:border-box;padding:12px;" required></textarea>
+            <button type="submit" id="broadcast-submit">📢 Dispatch Announcement to All Parents</button>
+            <p id="broadcast-status" role="status" aria-live="polite"></p>
+        </form>
+        <a class="btn-success" href="/admin/master_erp_report" style="display:inline-block;margin-top:8px;text-decoration:none;padding:10px 16px;">
+            📊 Download Master College ERP Report
+        </a>
+    </section>
+</div>
+
 <div class="grid" style="margin-bottom: 20px;">
     <div class="card full-width">
         <h3>{% if current_lang == 'ur' %}⚙️ ایڈمن پروفائل اور لاگ ان{% else %}⚙️ Admin Profile & Login{% endif %}</h3>
@@ -374,13 +391,14 @@
                 <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required>
                 <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required>
                 <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off">
-                <select name="program" required>
+                <select id="student-program" name="program" data-academic-program required>
                     <option value="">-- Select Program --</option>
-                    <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option>
                 </select>
-                <select name="part" required>
+                <select id="student-part" name="part" data-academic-part required disabled>
                     <option value="">-- Select Part / Semester --</option>
-                    <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option>
+                </select>
+                <select id="student-section" name="section" data-academic-section required disabled>
+                    <option value="">-- Select Section --</option>
                 </select>
                 <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button>
             </form>
@@ -393,16 +411,17 @@
         <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="scan-student-form" data-open-label="+ Scan / Import Students" data-close-label="− Cancel">+ Scan / Import Students</button>
         <div id="scan-student-form" class="form-panel" hidden>
             <p>Choose or photograph a clear list. OCR runs in this browser; check and correct the recognized rows before importing.</p>
-            <label for="student-scan-image">Photo or scanned image</label>
-            <input id="student-scan-image" type="file" accept="image/*" capture="environment">
+            <label for="student-scan-image">PDF or scanned image</label>
+            <input id="student-scan-image" type="file" accept="application/pdf, image/*" capture="environment">
             <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <select id="scan-program" required>
+                <select id="scan-program" data-academic-program required>
                     <option value="">-- Select Program --</option>
-                    <option value="FA">FA</option><option value="FA IT">FA IT</option><option value="FSc">FSc</option><option value="ICS">ICS</option><option value="DIT">DIT</option><option value="BS-CS">BS-CS</option><option value="BS-IT">BS-IT</option><option value="BS-Commerce">BS Commerce</option><option value="BS-English">BS English</option><option value="I.Com">I.Com</option><option value="D.Com">D.Com</option>
                 </select>
-                <select id="scan-part" required>
+                <select id="scan-part" data-academic-part required disabled>
                     <option value="">-- Select Part / Semester --</option>
-                    <option value="Part-1">Part-1</option><option value="Part-2">Part-2</option><option value="Semester-1">Semester-1</option><option value="Semester-2">Semester-2</option><option value="Semester-3">Semester-3</option><option value="Semester-4">Semester-4</option><option value="Semester-5">Semester-5</option><option value="Semester-6">Semester-6</option><option value="Semester-7">Semester-7</option><option value="Semester-8">Semester-8</option>
+                </select>
+                <select id="scan-section" data-academic-section required disabled>
+                    <option value="">-- Select Section --</option>
                 </select>
             </div>
             <button id="scan-students-button" type="button">Scan image (OCR)</button>
@@ -444,6 +463,13 @@
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Contact (Optional)</label><input type="text" name="phone_number" value="{{ edit_student.phone_number if edit_student.phone_number else '' }}"></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Program</label><input type="text" name="program" value="{{ edit_student.program }}" required></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Part/Semester</label><input type="text" name="part" value="{{ edit_student.part }}" required></div>
+            <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Section</label>
+                <select name="section" required>
+                    {% for academic_section in academic_sections %}
+                    <option value="{{ academic_section }}" {% if (edit_student.section or 'A')|upper == academic_section %}selected{% endif %}>{{ academic_section }}</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
         <button type="submit" class="btn-success" style="width:auto; padding:10px 25px;">💾 Save Changes</button>
         <a href="/admin/dashboard" style="background:#6c757d; color:white; padding:12px 20px; border-radius:6px; text-decoration:none; font-weight:bold; font-size:14px; display:inline-block; margin-top:8px;">Cancel</a>
@@ -479,11 +505,15 @@
     <form id="admin-filter-form" method="GET" action="/admin/dashboard" class="filter-form-bar">
         <select name="program" id="admin-filter-program">
             <option value="">-- All Programs --</option> 
-            <option value="FA" {% if selected_program == 'FA' %}selected{% endif %}>FA</option><option value="FA IT" {% if selected_program == 'FA IT' %}selected{% endif %}>FA IT</option><option value="FSc" {% if selected_program == 'FSc' %}selected{% endif %}>FSc</option><option value="ICS" {% if selected_program == 'ICS' %}selected{% endif %}>ICS</option><option value="DIT" {% if selected_program == 'DIT' %}selected{% endif %}>DIT</option><option value="BS-CS" {% if selected_program == 'BS-CS' %}selected{% endif %}>BS-CS</option><option value="BS-IT" {% if selected_program == 'BS-IT' %}selected{% endif %}>BS-IT</option><option value="BS-Commerce" {% if selected_program == 'BS-Commerce' %}selected{% endif %}>BS Commerce</option><option value="BS-English" {% if selected_program == 'BS-English' %}selected{% endif %}>BS English</option><option value="I.Com" {% if selected_program == 'I.Com' %}selected{% endif %}>I.Com</option><option value="D.Com" {% if selected_program == 'D.Com' %}selected{% endif %}>D.Com</option> 
+            {% for program_config in academic_programs %}
+            <option value="{{ program_config.key }}" {% if selected_program|lower|replace('-', '')|replace(' ', '')|replace('.', '') == program_config.key|lower|replace('-', '')|replace(' ', '')|replace('.', '') %}selected{% endif %}>{{ program_config.display_name }}</option>
+            {% endfor %}
         </select> 
         <select name="part" id="admin-filter-part">
             <option value="">-- All Parts/Semesters --</option> 
-            <option value="Part-1" {% if selected_part == 'Part-1' %}selected{% endif %}>Part-1</option><option value="Part-2" {% if selected_part == 'Part-2' %}selected{% endif %}>Part-2</option><option value="Semester-1" {% if selected_part == 'Semester-1' %}selected{% endif %}>Semester-1</option><option value="Semester-2" {% if selected_part == 'Semester-2' %}selected{% endif %}>Semester-2</option><option value="Semester-3" {% if selected_part == 'Semester-3' %}selected{% endif %}>Semester-3</option><option value="Semester-4" {% if selected_part == 'Semester-4' %}selected{% endif %}>Semester-4</option><option value="Semester-5" {% if selected_part == 'Semester-5' %}selected{% endif %}>Semester-5</option><option value="Semester-6" {% if selected_part == 'Semester-6' %}selected{% endif %}>Semester-6</option><option value="Semester-7" {% if selected_part == 'Semester-7' %}selected{% endif %}>Semester-7</option><option value="Semester-8" {% if selected_part == 'Semester-8' %}selected{% endif %}>Semester-8</option> 
+            {% for academic_part in academic_parts %}
+            <option value="{{ academic_part }}" {% if selected_part|lower == academic_part|lower %}selected{% endif %}>{{ academic_part }}</option>
+            {% endfor %}
         </select> 
         {% if selected_program or selected_part %}
             <button type="button" id="admin-clear-filter" style="background:#dc3545; color:white; padding:10px 18px; border-radius:6px; font-weight:bold; font-size:14px; display:inline-block;">Clear Filter ❌</button>
@@ -495,14 +525,14 @@
 
     <table> 
         <thead> 
-            <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Attendance Status (%)</th><th>Actions</th></tr> 
+            <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Section</th><th>Attendance Status (%)</th><th>Actions</th></tr>
         </thead> 
         <tbody id="admin-students-body">
             {% for student in students %} 
             <tr> 
                 <td><b>{{ student.roll_no }}</b></td> 
                 <td>{{ student.student_name }}</td><td>{{ student.father_name }}</td><td>{{ student.phone_number if student.phone_number else '-' }}</td> 
-                <td>{{ student.program }}</td><td>{{ student.part }}</td> 
+                <td>{{ student.program }}</td><td>{{ student.part }}</td><td>{{ student.section or 'A' }}</td>
                 <!-- ⚡ FIXED LINK NODE: Connects frontend directly with individual print data arrays in app.py -->
                 <td style="color: #198754; font-weight: bold;">
                     {{ student.percentage }}% 
@@ -561,7 +591,7 @@
 
     function renderFallback(text) {
       tableBody.innerHTML = '';
-      tableBody.innerHTML = `<tr><td colspan="8" role="status">${escapeHtml(text)}</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="9" role="status">${escapeHtml(text)}</td></tr>`;
     }
 
     function renderStudents(payload) {
@@ -578,6 +608,7 @@
             <td>${escapeHtml(student.phone_number || '-')}</td>
             <td>${escapeHtml(student.program || '-')}</td>
             <td>${escapeHtml(student.part || '-')}</td>
+            <td>${escapeHtml(student.section || 'A')}</td>
             <td style="color:#198754;font-weight:bold;">${escapeHtml(student.percentage ?? 0)}%
               <a href="/admin/download_student_report/${encodeURIComponent(student.id)}" target="_blank" style="margin-left:8px;background:#198754;color:white;padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;display:inline-block;">PDF 📄</a>
             </td>
@@ -809,6 +840,77 @@
   })();
 </script>
 <script>
+  (function() {
+    const academicPrograms = {{ academic_programs|tojson }};
+
+    function configureAcademicSelectors(programId, partId, sectionId) {
+      const programSelect = document.getElementById(programId);
+      const partSelect = document.getElementById(partId);
+      const sectionSelect = document.getElementById(sectionId);
+      if (!programSelect || !partSelect || !sectionSelect) return;
+
+      academicPrograms.forEach(program => {
+        programSelect.add(new Option(program.display_name, program.key));
+      });
+
+      function updateClassOptions() {
+        const selectedProgram = academicPrograms.find(
+          program => program.key === programSelect.value
+        );
+        const previousPart = partSelect.value;
+        const previousSection = sectionSelect.value;
+        partSelect.replaceChildren(new Option('-- Select Part / Semester --', ''));
+        sectionSelect.replaceChildren(new Option('-- Select Section --', ''));
+        partSelect.disabled = !selectedProgram;
+        sectionSelect.disabled = !selectedProgram;
+        if (!selectedProgram) return;
+        selectedProgram.parts.forEach(part => partSelect.add(new Option(part, part)));
+        selectedProgram.sections.forEach(section => sectionSelect.add(new Option(section, section)));
+        if (selectedProgram.parts.includes(previousPart)) partSelect.value = previousPart;
+        if (selectedProgram.sections.includes(previousSection)) sectionSelect.value = previousSection;
+      }
+
+      programSelect.addEventListener('change', updateClassOptions);
+      updateClassOptions();
+    }
+
+    configureAcademicSelectors('student-program', 'student-part', 'student-section');
+    configureAcademicSelectors('scan-program', 'scan-part', 'scan-section');
+  })();
+</script>
+<script>
+  (function() {
+    const form = document.getElementById('admin-broadcast-form');
+    const status = document.getElementById('broadcast-status');
+    const button = document.getElementById('broadcast-submit');
+    if (!form || !status || !button) return;
+
+    form.addEventListener('submit', async function(event) {
+      event.preventDefault();
+      if (!window.confirm('Send this announcement to every parent contact for this college?')) return;
+      button.disabled = true;
+      status.textContent = 'Sending announcement to parent contacts...';
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          body: new FormData(form),
+          credentials: 'same-origin',
+          headers: {'Accept': 'application/json'}
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || `Broadcast failed (HTTP ${response.status}).`);
+        status.textContent =
+          `Broadcast finished: ${result.sent} sent, ${result.failed} failed, ${result.skipped} invalid or missing phone numbers.`;
+        form.elements.announcement.value = '';
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Broadcast failed.';
+      } finally {
+        button.disabled = false;
+      }
+    });
+  })();
+</script>
+<script>
   document.getElementById('scan-students-button').addEventListener('click', async function() {
     const file = document.getElementById('student-scan-image').files[0];
     const status = document.getElementById('scan-status');
@@ -816,8 +918,13 @@
       status.textContent = 'Choose or take a clear image first.';
       return;
     }
-    if (!window.Tesseract) {
-      status.textContent = 'OCR library could not load. Check your connection, then retry; you can also paste tab-separated text below.';
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!window.Tesseract || (isPdf && !window.pdfjsLib)) {
+      status.textContent = 'The PDF or OCR library could not load. Check your connection, then retry; you can also paste tab-separated text below.';
+      return;
+    }
+    if (isPdf && file.size > 20 * 1024 * 1024) {
+      status.textContent = 'PDF files must be 20 MB or smaller.';
       return;
     }
     this.disabled = true;
@@ -825,8 +932,32 @@
     let worker;
     try {
       worker = await Tesseract.createWorker('eng');
-      const result = await worker.recognize(file);
-      document.getElementById('scan-students-text').value = result.data.text;
+      let recognizedText = '';
+      if (isPdf) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const pdf = await window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+        if (pdf.numPages > 10) throw new Error('PDF files may contain no more than 10 pages.');
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not create a canvas to read this PDF.');
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+          status.textContent = `Reading PDF page ${pageNumber} of ${pdf.numPages}...`;
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({scale: 1.5});
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          await page.render({canvasContext: context, viewport}).promise;
+          const result = await worker.recognize(canvas);
+          recognizedText += result.data.text + '\n';
+        }
+        canvas.width = 0;
+        canvas.height = 0;
+      } else {
+        const result = await worker.recognize(file);
+        recognizedText = result.data.text;
+      }
+      document.getElementById('scan-students-text').value = recognizedText;
       status.textContent = 'Scan finished. Check every row and correct OCR mistakes before importing.';
     } catch (error) {
       status.textContent = 'Scan failed: ' + error.message;
@@ -840,9 +971,10 @@
     const status = document.getElementById('scan-status');
     const program = document.getElementById('scan-program').value;
     const part = document.getElementById('scan-part').value;
+    const section = document.getElementById('scan-section').value;
     const text = document.getElementById('scan-students-text').value.trim();
-    if (!program || !part) {
-      status.textContent = 'Select the program and part/semester for this list.';
+    if (!program || !part || !section) {
+      status.textContent = 'Select the program, part/semester, and section for this list.';
       return;
     }
     const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -859,7 +991,8 @@
         father_name: columns[2],
         phone_number: columns[3] || '',
         program: program,
-        part: part
+        part: part,
+        section: section
       });
     }
     if (!rows.length) {
@@ -900,5 +1033,6 @@
   }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </body>
 </html>

@@ -6,6 +6,32 @@ import psycopg2
 from werkzeug.security import generate_password_hash
 
 
+ACADEMIC_PROGRAM_SEEDS = (
+    ('FA', 'FA (Arts)', 'Intermediate', ('Part-1', 'Part-2')),
+    ('FA IT', 'FA IT (Arts in IT)', 'Intermediate', ('Part-1', 'Part-2')),
+    ('FSc Pre-Medical', 'FSc Pre-Medical', 'Intermediate', ('Part-1', 'Part-2')),
+    ('FSc Pre-Engineering', 'FSc Pre-Engineering', 'Intermediate', ('Part-1', 'Part-2')),
+    ('FSc', 'FSc (Legacy)', 'Intermediate', ('Part-1', 'Part-2')),
+    ('ICS', 'ICS (Computer Science)', 'Intermediate', ('Part-1', 'Part-2')),
+    ('I.Com', 'I.Com (Commerce)', 'Intermediate', ('Part-1', 'Part-2')),
+    ('General Science', 'General Science', 'Intermediate', ('Part-1', 'Part-2')),
+    ('BS-CS', 'BS-CS (Computer Science)', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS-IT', 'BS-IT (Information Technology)', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Commerce', 'BS Commerce', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS English', 'BS English', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Chemistry', 'BS Chemistry', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Physics', 'BS Physics', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Mathematics', 'BS Mathematics', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Zoology', 'BS Zoology', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Botany', 'BS Botany', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BS Psychology', 'BS Psychology', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('BBA', 'BBA (Business Administration)', 'BS Degree', tuple(f'Semester-{n}' for n in range(1, 9))),
+    ('DIT', 'DIT (Diploma in Information Technology)', 'Professional Diploma', ('Part-1', 'Part-2')),
+    ('D.Com', 'D.Com (Diploma in Commerce)', 'Professional Diploma', ('Part-1', 'Part-2')),
+)
+ACADEMIC_SECTIONS = ('A', 'B', 'C', 'D')
+
+
 def get_database_url():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
@@ -48,6 +74,11 @@ def setup_database():
                     )
                 conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(teacher_id, college_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(roll_no, college_id))")
+                student_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()
+                }
+                if 'section' not in student_columns:
+                    conn.execute("ALTER TABLE students ADD COLUMN section TEXT NOT NULL DEFAULT 'A'")
                 for table_name in ('teachers', 'students'):
                     columns = {
                         row[1] for row in
@@ -62,6 +93,21 @@ def setup_database():
                 if 'client_timestamp' not in attendance_columns:
                     conn.execute("ALTER TABLE attendance ADD COLUMN client_timestamp TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL, sections TEXT NOT NULL)")
+                conn.execute("CREATE TABLE IF NOT EXISTS academic_class_options (program_key TEXT NOT NULL, part TEXT NOT NULL, section TEXT NOT NULL, PRIMARY KEY (program_key, part, section))")
+                for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
+                    conn.execute(
+                        "INSERT INTO academic_programs (program_key, display_name, level, parts, sections) "
+                        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (program_key) DO UPDATE SET "
+                        "display_name = excluded.display_name, level = excluded.level, "
+                        "parts = excluded.parts, sections = excluded.sections",
+                        (program_key, display_name, level, ','.join(parts), ','.join(ACADEMIC_SECTIONS))
+                    )
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO academic_class_options (program_key, part, section) "
+                        "VALUES (?, ?, ?)",
+                        [(program_key, part, section) for part in parts for section in ACADEMIC_SECTIONS]
+                    )
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, display_name, username, password, total_periods) VALUES (?, ?, ?, ?, ?)", ("Punjab College", "Punjab College Admin", "admin1", "pc123", 8))
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, display_name, username, password, total_periods) VALUES (?, ?, ?, ?, ?)", ("Superior College", "Superior College Admin", "admin2", "sc123", 5))
         finally:
@@ -127,6 +173,7 @@ def setup_database():
                 )
                 """)
                 cursor.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_image TEXT")
+                cursor.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'A'")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS attendance (
                     id SERIAL PRIMARY KEY,
@@ -148,6 +195,36 @@ def setup_database():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS academic_programs (
+                    program_key TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    parts TEXT NOT NULL,
+                    sections TEXT NOT NULL
+                )
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS academic_class_options (
+                    program_key TEXT NOT NULL,
+                    part TEXT NOT NULL,
+                    section TEXT NOT NULL,
+                    PRIMARY KEY (program_key, part, section)
+                )
+                """)
+                for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
+                    cursor.execute(
+                        "INSERT INTO academic_programs (program_key, display_name, level, parts, sections) "
+                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (program_key) DO UPDATE SET "
+                        "display_name = EXCLUDED.display_name, level = EXCLUDED.level, "
+                        "parts = EXCLUDED.parts, sections = EXCLUDED.sections",
+                        (program_key, display_name, level, ','.join(parts), ','.join(ACADEMIC_SECTIONS))
+                    )
+                    cursor.executemany(
+                        "INSERT INTO academic_class_options (program_key, part, section) "
+                        "VALUES (%s, %s, %s) ON CONFLICT (program_key, part, section) DO NOTHING",
+                        [(program_key, part, section) for part in parts for section in ACADEMIC_SECTIONS]
+                    )
                 cursor.execute(
                     "INSERT INTO admins (college_name, display_name, username, password, total_periods) "
                     "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",

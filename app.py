@@ -5,6 +5,8 @@ import json
 import hmac
 import html
 import re
+import secrets
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
@@ -217,6 +219,7 @@ def student_api_response(students, status_code=200):
             'phone_number': student.get('phone_number', ''),
             'program': student.get('program', ''),
             'part': student.get('part', ''),
+            'section': student.get('section', 'A'),
             'saved_status': student.get('saved_status', ''),
             'percentage': student.get('percentage', 0)
         }
@@ -377,10 +380,41 @@ def get_db_connection():
     return conn
 
 
+WHATSAPP_CLASS_ALIASES = {
+    'fa it': 'FA IT',
+    'fa': 'FA',
+    'fsc pre medical': 'FSc Pre-Medical',
+    'fsc pre engineering': 'FSc Pre-Engineering',
+    'fsc': 'FSc',
+    'ics': 'ICS',
+    'i com': 'I.Com',
+    'icom': 'I.Com',
+    'general science': 'General Science',
+    'bs cs': 'BS-CS',
+    'bs it': 'BS-IT',
+    'bs commerce': 'BS Commerce',
+    'bs english': 'BS English',
+    'bs chemistry': 'BS Chemistry',
+    'bs physics': 'BS Physics',
+    'bs mathematics': 'BS Mathematics',
+    'bs zoology': 'BS Zoology',
+    'bs botany': 'BS Botany',
+    'bs psychology': 'BS Psychology',
+    'bba': 'BBA',
+    'dit': 'DIT',
+    'd com': 'D.Com',
+    'dcom': 'D.Com'
+}
+_WHATSAPP_CLASS_PATTERN = (
+    r'fa[\s-]*it|fsc[\s-]*pre[\s-]*medical|fsc[\s-]*pre[\s-]*engineering|general[\s-]*science|'
+    r'bs\s*[- ]?\s*(?:cs|it|commerce|english|chemistry|physics|mathematics|zoology|botany|psychology)|'
+    r'i\.?\s*com|d\.?\s*com|fa|fsc|ics|bba|dit'
+)
 WHATSAPP_CONTEXT_PATTERN = re.compile(
-    r'(?P<program>[A-Za-z][A-Za-z0-9 &._-]*?)\s+Part[\s-]*(?P<part>\d+)\s+'
-    r'(?P<roll>\d+)\s+(?P<intent>report|attendance|status)\s*',
-    re.IGNORECASE
+    rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
+    r'(?:(?:part|semester|sem)\s*[- ]*|[- ]*)'
+    r'(?P<part>\d+)\s*(?:roll\s*(?:no\.?\s*)?)?'
+    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)\b'
 )
 WHATSAPP_INTENT_PATTERN = re.compile(r'\b(report|attendance|status)\b', re.IGNORECASE)
 WHATSAPP_UNVERIFIED_REPLY = (
@@ -434,11 +468,23 @@ def extract_meta_whatsapp_messages(payload):
 
 
 def parse_whatsapp_context(message):
-    match = WHATSAPP_CONTEXT_PATTERN.fullmatch(message.strip())
+    text_clean = message.lower().strip()
+    match = WHATSAPP_CONTEXT_PATTERN.search(text_clean)
     if not match:
         return None
+    class_text = re.sub(r'\s+', ' ', match.group('class').replace('.', ' ')).strip()
+    normalized_class = re.sub(r'[^a-z0-9]', '', class_text)
+    program = next(
+        (
+            canonical for alias, canonical in WHATSAPP_CLASS_ALIASES.items()
+            if re.sub(r'[^a-z0-9]', '', alias) == normalized_class
+        ),
+        None
+    )
+    if program is None:
+        return None
     return {
-        'program': match.group('program').strip(),
+        'program': program,
         'part': match.group('part'),
         'roll': str(int(match.group('roll'))),
         'intent': match.group('intent').lower()
@@ -457,10 +503,12 @@ def normalized_whatsapp_phone(phone):
 def find_whatsapp_student(cursor, sender, context):
     student_columns = 'id, roll_no, student_name, phone_number, program, part, college_id'
     if context:
+        normalized_program = re.sub(r'[^a-z0-9]', '', context['program'].lower())
         cursor.execute(
             'SELECT ' + student_columns + ' FROM students '
-            'WHERE LOWER(TRIM(program)) = LOWER(TRIM(%s)) AND roll_no = %s',
-            (context['program'], context['roll'])
+            "WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(program), '-', ''), ' ', ''), '.', '')) = %s "
+            'AND roll_no = %s',
+            (normalized_program, context['roll'])
         )
         students = [
             student for student in cursor.fetchall()
@@ -534,7 +582,7 @@ def whatsapp_attendance_reply(cursor, student, intent):
     return f"Assalamu Alaikum! {student_label} — {attendance_summary}. CAS System Management."
 
 
-def dispatch_meta_whatsapp_message(recipient, message):
+def get_meta_whatsapp_configuration():
     access_token = os.environ.get('META_ACCESS_TOKEN', '').strip()
     phone_number_id = os.environ.get('META_PHONE_NUMBER_ID', '').strip()
     api_version = os.environ.get('META_GRAPH_API_VERSION', '').strip()
@@ -546,7 +594,11 @@ def dispatch_meta_whatsapp_message(recipient, message):
         raise MetaWhatsAppConfigurationError('META_PHONE_NUMBER_ID must contain only digits.')
     if not re.fullmatch(r'v\d+\.\d+', api_version):
         raise MetaWhatsAppConfigurationError('META_GRAPH_API_VERSION must use the format vNN.N.')
+    return access_token, phone_number_id, api_version
 
+
+def dispatch_meta_whatsapp_message(recipient, message):
+    access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
     response = requests.post(
         f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
         headers={
@@ -564,13 +616,45 @@ def dispatch_meta_whatsapp_message(recipient, message):
     )
     response.raise_for_status()
 
+
+def academic_program_options(cursor):
+    cursor.execute(
+        'SELECT program_key, display_name, level, parts, sections '
+        'FROM academic_programs ORDER BY level, display_name'
+    )
+    return [
+        {
+            'key': row['program_key'],
+            'display_name': row['display_name'],
+            'level': row['level'],
+            'parts': row['parts'].split(','),
+            'sections': row['sections'].split(',')
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def normalize_meta_recipient(phone):
+    digits = re.sub(r'\D', '', phone or '')
+    if digits.startswith('00'):
+        digits = digits[2:]
+    elif digits.startswith('0'):
+        country_code = os.environ.get('WHATSAPP_DEFAULT_COUNTRY_CODE', '92').strip()
+        if not re.fullmatch(r'\d{1,3}', country_code):
+            raise ValueError('WHATSAPP_DEFAULT_COUNTRY_CODE must contain 1–3 digits.')
+        digits = country_code + digits[1:]
+    if not 8 <= len(digits) <= 15 or digits.startswith('0'):
+        return None
+    return digits
+
+
 @app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
 def whatsapp_webhook():
     if request.method == 'GET':
         challenge = request.args.get('hub.challenge', '')
-        return str(challenge), 200     
-    # POST handling code keeps working below perfectly...
-payload = request.get_json(silent=True)
+        return str(challenge), 200
+
+    payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return '', 400
     messages = extract_meta_whatsapp_messages(payload)
@@ -582,9 +666,10 @@ payload = request.get_json(silent=True)
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        for sender, message in messages:
-            context = parse_whatsapp_context(message)
-            intent_match = WHATSAPP_INTENT_PATTERN.search(message)
+        for sender, text in messages:
+            text_clean = text.lower().strip()
+            context = parse_whatsapp_context(text_clean)
+            intent_match = WHATSAPP_INTENT_PATTERN.search(text_clean)
             intent = context['intent'] if context else (
                 intent_match.group(1).lower() if intent_match else None
             )
@@ -612,6 +697,100 @@ payload = request.get_json(silent=True)
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.route('/admin/broadcast_message', methods=['POST'])
+def admin_broadcast_message():
+    if session.get('role') != 'admin' or not session.get('user_id'):
+        return jsonify({'status': 'error', 'message': 'Admin login is required.'}), 401
+    if not offline_sync_actor_matches('admin', session.get('user_id')):
+        return jsonify({'status': 'error', 'message': 'This admin session is no longer valid.'}), 403
+    supplied_token = request.form.get('csrf_token', '')
+    expected_token = session.get('admin_csrf_token', '')
+    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
+        return jsonify({'status': 'error', 'message': 'The security token is invalid. Reload the page and try again.'}), 403
+
+    message = request.form.get('announcement', '')
+    if not isinstance(message, str) or not message.strip():
+        return jsonify({'status': 'error', 'message': 'Enter an announcement before sending.'}), 400
+    message = message.strip()
+    if len(message) > 4096:
+        return jsonify({'status': 'error', 'message': 'Announcements must be 4,096 characters or fewer.'}), 400
+    try:
+        get_meta_whatsapp_configuration()
+    except MetaWhatsAppConfigurationError as error:
+        app.logger.error('Meta WhatsApp API configuration error for admin broadcast: %s', error)
+        return jsonify({'status': 'error', 'message': 'WhatsApp messaging is not configured.'}), 503
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT phone_number FROM students WHERE college_id = %s',
+            (session['user_id'],)
+        )
+        phone_numbers = cursor.fetchall()
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('Could not load parent recipients for the admin broadcast.')
+        return jsonify({'status': 'error', 'message': 'The parent directory is temporarily unavailable.'}), 503
+    finally:
+        if conn is not None:
+            conn.close()
+
+    recipients = set()
+    skipped = 0
+    try:
+        for row in phone_numbers:
+            if not (row['phone_number'] or '').strip():
+                skipped += 1
+                continue
+            recipient = normalize_meta_recipient(row['phone_number'])
+            if recipient:
+                recipients.add(recipient)
+            else:
+                skipped += 1
+    except ValueError as error:
+        app.logger.error('Invalid WhatsApp country-code configuration for admin broadcast: %s', error)
+        return jsonify({'status': 'error', 'message': str(error)}), 500
+
+    def deliver_announcement(recipient):
+        try:
+            dispatch_meta_whatsapp_message(recipient, message)
+            return 'sent'
+        except requests.RequestException:
+            app.logger.exception('Meta WhatsApp broadcast delivery failed for a recipient.')
+            return 'failed'
+
+    delivered = 0
+    failed = 0
+    if recipients:
+        with ThreadPoolExecutor(max_workers=min(8, len(recipients))) as executor:
+            futures = [executor.submit(deliver_announcement, recipient) for recipient in recipients]
+            for future in as_completed(futures):
+                if future.result() == 'sent':
+                    delivered += 1
+                else:
+                    failed += 1
+    return jsonify({
+        'status': 'success',
+        'recipients': len(recipients),
+        'sent': delivered,
+        'failed': failed,
+        'skipped': skipped
+    })
+
+
+def validate_academic_class(cursor, program, part, section):
+    normalized_program = re.sub(r'[^a-z0-9]', '', program.lower())
+    cursor.execute(
+        'SELECT p.program_key, o.part, o.section FROM academic_programs p '
+        'JOIN academic_class_options o ON o.program_key = p.program_key '
+        "WHERE LOWER(REPLACE(REPLACE(REPLACE(p.program_key, '-', ''), ' ', ''), '.', '')) = %s "
+        'AND LOWER(o.part) = LOWER(%s) AND UPPER(o.section) = UPPER(%s)',
+        (normalized_program, part.strip(), section.strip())
+    )
+    return cursor.fetchone()
 
 
 def delete_student_record(cursor, student_id, college_id):
@@ -859,6 +1038,14 @@ def admin_dashboard():
     cursor = conn.cursor()
     cursor.execute('SELECT display_name FROM admins WHERE id = %s', (college_id,))
     admin_profile = cursor.fetchone()
+    academic_programs = academic_program_options(cursor)
+    academic_parts = sorted({
+        part for program_config in academic_programs for part in program_config['parts']
+    })
+    academic_sections = sorted({
+        section for program_config in academic_programs for section in program_config['sections']
+    })
+    csrf_token = session.setdefault('admin_csrf_token', secrets.token_urlsafe(32))
     if admin_profile:
         current_admin_name = admin_profile['display_name'] or college_name
         session['admin_name'] = current_admin_name
@@ -976,10 +1163,22 @@ def admin_dashboard():
             phone_number = admin_request_value(request_values, 'phone_number')
             program = admin_request_value(request_values, 'program', required=True)
             part = admin_request_value(request_values, 'part', required=True)
+            section = admin_request_value(request_values, 'section') or 'A'
+            academic_class = validate_academic_class(cursor, program, part, section)
+            if not academic_class:
+                conn.close()
+                return sync_json_response(
+                    'error', 400,
+                    message='Select a program, part/semester, and section from the available class options.'
+                )
             cursor.execute(
-                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                (roll_no, student_name, father_name, phone_number, program, part, college_id)
+                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, section, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                (
+                    roll_no, student_name, father_name, phone_number,
+                    academic_class['program_key'], academic_class['part'],
+                    academic_class['section'], college_id
+                )
             )
             conn.commit()
         elif action == 'edit_teacher_admin':
@@ -992,8 +1191,28 @@ def admin_dashboard():
         elif action == 'edit_student_admin':
             # 🛠️ FIXED 100% OPTIONAL: Student phone number edit karte waqt khali chordne par string configuration crash nahi hogi
             phone_val = request.form.get('phone_number', '').strip()
-            cursor.execute('UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, phone_number=%s, program=%s, part=%s WHERE id=%s AND college_id=%s',
-                         (request.form['roll_no'], request.form['student_name'], request.form['father_name'], phone_val, request.form['program'], request.form['part'], request.form['id'], college_id))
+            section_val = request.form.get('section', 'A').strip() or 'A'
+            academic_class = validate_academic_class(
+                cursor, request.form.get('program', '').strip(),
+                request.form.get('part', '').strip(), section_val
+            )
+            if not academic_class:
+                conn.close()
+                return sync_json_response(
+                    'error', 400,
+                    message='Select a program, part/semester, and section from the available class options.'
+                )
+            cursor.execute(
+                'UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, '
+                'phone_number=%s, program=%s, part=%s, section=%s '
+                'WHERE id=%s AND college_id=%s',
+                (
+                    request.form['roll_no'], request.form['student_name'],
+                    request.form['father_name'], phone_val, academic_class['program_key'],
+                    academic_class['part'], academic_class['section'],
+                    request.form['id'], college_id
+                )
+            )
             conn.commit()
         elif action == 'delete_teacher':
             teacher_id = request.form.get('id')
@@ -1007,9 +1226,19 @@ def admin_dashboard():
             conn.close()
             return sync_json_response()
     if selected_program and selected_part:
-        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s AND part = %s ORDER BY roll_no ASC', (college_id, selected_program, selected_part))
+        cursor.execute(
+            "SELECT * FROM students WHERE college_id = %s "
+            "AND LOWER(REPLACE(REPLACE(REPLACE(program, '-', ''), ' ', ''), '.', '')) = %s "
+            "AND LOWER(part) = LOWER(%s) ORDER BY roll_no ASC",
+            (college_id, re.sub(r'[^a-z0-9]', '', selected_program.lower()), selected_part)
+        )
     elif selected_program:
-        cursor.execute('SELECT * FROM students WHERE college_id = %s AND program = %s ORDER BY roll_no ASC', (college_id, selected_program))
+        cursor.execute(
+            "SELECT * FROM students WHERE college_id = %s "
+            "AND LOWER(REPLACE(REPLACE(REPLACE(program, '-', ''), ' ', ''), '.', '')) = %s "
+            "ORDER BY roll_no ASC",
+            (college_id, re.sub(r'[^a-z0-9]', '', selected_program.lower()))
+        )
     elif selected_part:
         cursor.execute('SELECT * FROM students WHERE college_id = %s AND part = %s ORDER BY roll_no ASC', (college_id, selected_part))
     else:
@@ -1052,6 +1281,8 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_admin_name=current_admin_name, current_lang=current_lang,
+                           academic_programs=academic_programs, academic_parts=academic_parts,
+                           academic_sections=academic_sections, csrf_token=csrf_token,
                            edit_teacher=edit_teacher_data, edit_student=edit_student_data)
 
 
@@ -1165,11 +1396,12 @@ def import_students():
         if not isinstance(row, dict):
             return jsonify({"error": f"Row {row_number} is invalid."}), 400
         fields = {}
-        for field in ('roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part'):
+        for field in ('roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part', 'section'):
             value = row.get(field, '')
             if not isinstance(value, str):
                 return jsonify({"error": f"Row {row_number}: {field} must be text."}), 400
             fields[field] = value.strip()
+        fields['section'] = fields['section'] or 'A'
         if not all(fields[field] for field in ('roll_no', 'student_name', 'father_name', 'program', 'part')):
             return jsonify({"error": f"Row {row_number} is missing a required value."}), 400
         clean_rows.append(fields)
@@ -1185,12 +1417,25 @@ def import_students():
             conn.commit()
             return sync_json_response(imported=0, skipped=len(clean_rows))
         imported = 0
-        for row in clean_rows:
+        for row_number, row in enumerate(clean_rows, start=1):
+            academic_class = validate_academic_class(
+                cursor, row['program'], row['part'], row['section']
+            )
+            if not academic_class:
+                return jsonify({
+                    'error': (
+                        f"Row {row_number} has a program, part/semester, or section "
+                        "that is not in the academic class catalog."
+                    )
+                }), 400
             cursor.execute(
-                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (roll_no, college_id) DO NOTHING',
+                'INSERT INTO students '
+                '(roll_no, student_name, father_name, phone_number, program, part, section, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
+                'ON CONFLICT (roll_no, college_id) DO NOTHING',
                 (row['roll_no'], row['student_name'], row['father_name'], row['phone_number'],
-                 row['program'], row['part'], session['user_id'])
+                 academic_class['program_key'], academic_class['part'],
+                 academic_class['section'], session['user_id'])
             )
             imported += cursor.rowcount
         conn.commit()
@@ -1708,11 +1953,16 @@ def offline_seed_data():
     try:
         cursor = conn.cursor()
         cursor.execute(
-            'SELECT id, program, part, roll_no, student_name, father_name '
+            'SELECT id, program, part, section, roll_no, student_name, father_name '
             'FROM students WHERE college_id = %s ORDER BY program, part, roll_no',
             (college_id,)
         )
         students = [dict(row) for row in cursor.fetchall()]
+        seeded_programs = academic_program_options(cursor)
+        canonical_programs = {
+            re.sub(r'[^a-z0-9]', '', program_config['key'].lower()): program_config['key']
+            for program_config in seeded_programs
+        }
 
         cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
         college = cursor.fetchone()
@@ -1743,25 +1993,25 @@ def offline_seed_data():
 
         class_map = {}
         for student in students:
-            program = student['program']
+            normalized_program = re.sub(r'[^a-z0-9]', '', student['program'].lower())
+            program = canonical_programs.get(normalized_program, student['program'])
             part = student['part']
-            class_key = (program, part)
+            section = student['section'] or 'A'
+            class_key = (program, part, section)
             if class_key not in class_map:
                 class_map[class_key] = {
                     'program': program,
                     'part': part,
+                    'section': section,
                     'students': []
                 }
             class_map[class_key]['students'].append({
                 'id': student['id'],
                 'roll_no': student['roll_no'],
                 'student_name': student['student_name'],
-                'father_name': student['father_name'] or ''
+                'father_name': student['father_name'] or '',
+                'section': section
             })
-
-        programs = {}
-        for class_data in class_map.values():
-            programs.setdefault(class_data['program'], []).append(class_data['part'])
 
         return offline_seed_response({
             'status': 'success',
@@ -1770,10 +2020,12 @@ def offline_seed_data():
             'periods': list(range(1, total_periods + 1)),
             'programs': [
                 {
-                    'name': program,
-                    'parts': sorted(parts),
+                    'name': program_config['key'],
+                    'display_name': program_config['display_name'],
+                    'parts': program_config['parts'],
+                    'sections': program_config['sections']
                 }
-                for program, parts in sorted(programs.items())
+                for program_config in seeded_programs
             ],
             'classes': list(class_map.values()),
             'attendance': attendance_records
@@ -1793,6 +2045,7 @@ def teacher_dashboard():
     college_id = session.get('college_id')
     selected_program = request.args.get('program')
     selected_part = request.args.get('part')
+    selected_section = request.args.get('section', '')
     selected_date = request.args.get('attendance_date', datetime.today().strftime('%Y-%m-%d'))
     selected_period = request.args.get('period_no', '1')
     current_lang = session.get('lang', 'en')
@@ -1803,6 +2056,13 @@ def teacher_dashboard():
     cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
     col_info = cursor.fetchone()
     total_periods = int(col_info['total_periods'] or 6) if col_info else 6
+    academic_programs = academic_program_options(cursor)
+    academic_parts = sorted({
+        part for program_config in academic_programs for part in program_config['parts']
+    })
+    academic_sections = sorted({
+        section for program_config in academic_programs for section in program_config['sections']
+    })
     try:
         period_number = int(selected_period)
     except (TypeError, ValueError):
@@ -1816,7 +2076,20 @@ def teacher_dashboard():
         selected_date = datetime.today().strftime('%Y-%m-%d')
     
     if selected_program and selected_part:
-        cursor.execute('SELECT * FROM students WHERE program = %s AND part = %s AND college_id = %s', (selected_program, selected_part, college_id))
+        query = (
+            "SELECT * FROM students WHERE college_id = %s "
+            "AND LOWER(REPLACE(REPLACE(REPLACE(program, '-', ''), ' ', ''), '.', '')) = %s "
+            "AND LOWER(part) = LOWER(%s)"
+        )
+        query_params = [
+            college_id,
+            re.sub(r'[^a-z0-9]', '', selected_program.lower()),
+            selected_part
+        ]
+        if selected_section:
+            query += ' AND UPPER(section) = UPPER(%s)'
+            query_params.append(selected_section)
+        cursor.execute(query, tuple(query_params))
         raw_students = cursor.fetchall()
         for s in raw_students:
             s_dict = dict(s)
@@ -1829,7 +2102,9 @@ def teacher_dashboard():
     if request.args.get('format') == 'json':
         return student_api_response(students)
     return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, 
-                           selected_program=selected_program, selected_part=selected_part, 
+                           selected_program=selected_program, selected_part=selected_part,
+                           selected_section=selected_section, academic_programs=academic_programs,
+                           academic_parts=academic_parts, academic_sections=academic_sections,
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
 
 @app.route('/teacher/quick_attendance', methods=['POST'])
@@ -1968,6 +2243,186 @@ def download_proposal_pdf():
     # Maps directly to the production dynamic package deployment bundle
     return redirect("https://github.com")
 
+
+@app.route('/admin/master_erp_report', methods=['GET'])
+def download_master_erp_report():
+    if session.get('role') != 'admin' or not session.get('user_id'):
+        return redirect(url_for('welcome'))
+    if not offline_sync_actor_matches('admin', session.get('user_id')):
+        return sync_json_response('error', 403, message='This report belongs to a different admin account.')
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ImportError:
+        app.logger.exception('The openpyxl dependency is unavailable for the ERP report.')
+        return jsonify({'status': 'error', 'message': 'Spreadsheet report support is unavailable.'}), 503
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT s.id, s.roll_no, s.student_name, s.father_name, s.phone_number, '
+            's.program, s.part, s.section, COUNT(a.id) AS attendance_records, '
+            "SUM(CASE WHEN LOWER(TRIM(COALESCE(a.status, ''))) = 'present' THEN 1 ELSE 0 END) AS presents, "
+            "SUM(CASE WHEN LOWER(TRIM(COALESCE(a.status, ''))) = 'absent' THEN 1 ELSE 0 END) AS absences, "
+            "SUM(CASE WHEN LOWER(TRIM(COALESCE(a.status, ''))) = 'leave' THEN 1 ELSE 0 END) AS leaves "
+            'FROM students s LEFT JOIN attendance a '
+            'ON a.student_roll = s.roll_no AND a.college_id = s.college_id '
+            'WHERE s.college_id = %s '
+            'GROUP BY s.id, s.roll_no, s.student_name, s.father_name, s.phone_number, '
+            's.program, s.part, s.section ORDER BY s.program, s.part, s.section, s.roll_no',
+            (session['user_id'],)
+        )
+        student_records = cursor.fetchall()
+        cursor.execute(
+            'SELECT s.program, s.part, s.section, s.roll_no, s.student_name, '
+            'a.attendance_date, a.period_no, a.status, a.marked_by '
+            'FROM attendance a JOIN students s '
+            'ON a.student_roll = s.roll_no AND a.college_id = s.college_id '
+            'WHERE s.college_id = %s '
+            'ORDER BY s.program, s.part, s.section, s.roll_no, a.attendance_date, a.period_no',
+            (session['user_id'],)
+        )
+        attendance_records = cursor.fetchall()
+        cursor.execute(
+            'SELECT p.program_key, o.part, o.section FROM academic_programs p '
+            'JOIN academic_class_options o ON o.program_key = p.program_key '
+            'ORDER BY p.level, p.display_name, o.part, o.section'
+        )
+        class_options = cursor.fetchall()
+        cursor.execute('SELECT college_name FROM admins WHERE id = %s', (session['user_id'],))
+        college = cursor.fetchone()
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('Could not compile the master ERP report.')
+        return jsonify({'status': 'error', 'message': 'The college report data is temporarily unavailable.'}), 503
+    finally:
+        conn.close()
+
+    def class_key(program, part, section):
+        return (
+            re.sub(r'[^a-z0-9]', '', (program or '').lower()),
+            re.sub(r'[^a-z0-9]', '', (part or '').lower()),
+            (section or 'A').upper()
+        )
+
+    classes = {
+        class_key(option['program_key'], option['part'], option['section']): {
+            'program': option['program_key'],
+            'part': option['part'],
+            'section': option['section'],
+            'students': 0,
+            'attendance_records': 0,
+            'presents': 0,
+            'absences': 0,
+            'leaves': 0
+        }
+        for option in class_options
+    }
+    for student in student_records:
+        key = class_key(student['program'], student['part'], student['section'])
+        class_data = classes.setdefault(key, {
+            'program': student['program'],
+            'part': student['part'],
+            'section': student['section'] or 'A',
+            'students': 0,
+            'attendance_records': 0,
+            'presents': 0,
+            'absences': 0,
+            'leaves': 0
+        })
+        class_data['students'] += 1
+        for metric in ('attendance_records', 'presents', 'absences', 'leaves'):
+            class_data[metric] += int(student[metric] or 0)
+
+    def excel_text(value):
+        text = '' if value is None else str(value)
+        return "'" + text if text.lstrip(' \t\r\n').startswith(('=', '+', '-', '@')) else text
+
+    def prepare_sheet(sheet, headers, widths):
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='198754')
+            cell.alignment = Alignment(wrap_text=True, vertical='center')
+        sheet.freeze_panes = 'A2'
+        sheet.auto_filter.ref = 'A1'
+        for column, width in enumerate(widths, start=1):
+            sheet.column_dimensions[chr(64 + column)].width = width
+
+    workbook = Workbook()
+    student_sheet = workbook.active
+    student_sheet.title = 'Student Metrics'
+    prepare_sheet(student_sheet, [
+        'Program', 'Part / Semester', 'Section', 'Roll Number', 'Student Name',
+        'Father Name', 'Parent Phone', 'Total Historical Attendance Records',
+        'Presents', 'Absences', 'Leaves', 'Attendance Compliance %'
+    ], [24, 20, 12, 16, 28, 28, 20, 34, 14, 14, 12, 26])
+    for student in student_records:
+        presents = int(student['presents'] or 0)
+        absences = int(student['absences'] or 0)
+        eligible_records = presents + absences
+        compliance = round(presents * 100 / eligible_records, 1) if eligible_records else 0
+        student_sheet.append([
+            excel_text(student['program']), excel_text(student['part']),
+            excel_text(student['section'] or 'A'), excel_text(student['roll_no']),
+            excel_text(student['student_name']), excel_text(student['father_name']),
+            excel_text(student['phone_number']), int(student['attendance_records'] or 0),
+            presents, absences, int(student['leaves'] or 0), compliance
+        ])
+    student_sheet.auto_filter.ref = student_sheet.dimensions
+
+    class_sheet = workbook.create_sheet('Class Summary')
+    prepare_sheet(class_sheet, [
+        'Program', 'Part / Semester', 'Section', 'Registered Students',
+        'Total Attendance Records', 'Presents', 'Absences', 'Leaves',
+        'Attendance Compliance %'
+    ], [28, 20, 12, 22, 28, 14, 14, 12, 26])
+    for class_data in sorted(
+        classes.values(),
+        key=lambda item: (item['program'].lower(), item['part'].lower(), item['section'])
+    ):
+        present = class_data['presents']
+        absent = class_data['absences']
+        eligible_records = present + absent
+        compliance = round(present * 100 / eligible_records, 1) if eligible_records else 0
+        class_sheet.append([
+            excel_text(class_data['program']), excel_text(class_data['part']),
+            excel_text(class_data['section']), class_data['students'],
+            class_data['attendance_records'], present, absent, class_data['leaves'],
+            compliance
+        ])
+    class_sheet.auto_filter.ref = class_sheet.dimensions
+
+    history_sheet = workbook.create_sheet('Attendance History')
+    prepare_sheet(history_sheet, [
+        'Program', 'Part / Semester', 'Section', 'Roll Number', 'Student Name',
+        'Date', 'Period', 'Status', 'Marked By'
+    ], [28, 20, 12, 16, 28, 16, 12, 16, 24])
+    for record in attendance_records:
+        history_sheet.append([
+            excel_text(record['program']), excel_text(record['part']),
+            excel_text(record['section'] or 'A'), excel_text(record['roll_no']),
+            excel_text(record['student_name']), excel_text(record['attendance_date']),
+            int(record['period_no'] or 0), excel_text(record['status']),
+            excel_text(record['marked_by'])
+        ])
+    history_sheet.auto_filter.ref = history_sheet.dimensions
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    college_name = re.sub(r'[^A-Za-z0-9_-]+', '_', college['college_name'] if college else 'college')
+    response = send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'{college_name}_master_erp_report.xlsx'
+    )
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 # 📄 CUSTOM STUDENT HISTORICAL REPORT SHEET TRANSCRIPT API
 @app.route('/admin/download_student_report/<int:student_id>')
 def download_student_report(student_id):
@@ -1993,7 +2448,7 @@ def download_student_report(student_id):
     rows_html = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:10px;'>{r['attendance_date']}</td><td style='border:1px solid #dee2e6;padding:10px;text-align:center;'>Period {r['period_no']}</td><td style='border:1px solid #dee2e6;padding:10px;font-weight:bold;color:{'#28a745' if r['status']=='Present' else '#dc3545' if r['status']=='Absent' else '#ffc107' if r['status']=='Leave' else '#6f42c1'};'>{r['status']}</td><td style='border:1px solid #dee2e6;padding:10px;'>{r['marked_by']}</td></tr>" for r in records])
     if not records: rows_html = "<tr><td colspan='4' style='text-align:center;padding:20px;color:#6c757d;'>No attendance history logged yet.</td></tr>"
     
-    return f"""<html><head><title>Report_{roll}</title><style>body {{ font-family: 'Segoe UI', Arial; padding: 30px; color: #333; }} .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }} .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }} .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }} table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }} th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; }} .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; }} </style></head><body onload="window.print()"><div class="report-header"><h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2></div><div class="student-info"><div class="info-item"><b>Name:</b> {student['student_name']}</div><div class="info-item"><b>Father:</b> {student['father_name']}</div><div class="info-item"><b>Roll No:</b> {roll}</div><div class="info-item"><b>Class:</b> {student['program']} ({student['part']})</div><div class="info-item"><b>Attendance:</b> <span class="badge-pct">{percentage}%</span></div></div><table><thead><tr><th>Date</th><th>Period</th><th>Status</th><th>Faculty</th></tr></thead><tbody>{rows_html}</tbody></table></body></html>"""
+    return f"""<html><head><title>Report_{roll}</title><style>body {{ font-family: 'Segoe UI', Arial; padding: 30px; color: #333; }} .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }} .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }} .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }} table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }} th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; }} .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; }} </style></head><body onload="window.print()"><div class="report-header"><h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2></div><div class="student-info"><div class="info-item"><b>Name:</b> {student['student_name']}</div><div class="info-item"><b>Father:</b> {student['father_name']}</div><div class="info-item"><b>Roll No:</b> {roll}</div><div class="info-item"><b>Class:</b> {student['program']} ({student['part']} · Section {student['section'] or 'A'})</div><div class="info-item"><b>Attendance:</b> <span class="badge-pct">{percentage}%</span></div></div><table><thead><tr><th>Date</th><th>Period</th><th>Status</th><th>Faculty</th></tr></thead><tbody>{rows_html}</tbody></table></body></html>"""
 
 @app.route('/logout')
 def logout():
