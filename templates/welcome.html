@@ -77,7 +77,6 @@
                 <p class="notice-kicker">🚨 Emergency Notice</p>
                 <p id="global-notice-message" class="notice-message"></p>
             </div>
-            <img id="global-notice-image" class="notice-image" alt="Image attached to the college announcement" hidden>
         </section>
         <p id="global-notice-loading" class="notice-loading" role="status">Checking for current announcements…</p>
 
@@ -117,7 +116,6 @@
         (function() {
             const notice = document.getElementById('global-notice');
             const noticeMessage = document.getElementById('global-notice-message');
-            const noticeImage = document.getElementById('global-notice-image');
             const noticeLoading = document.getElementById('global-notice-loading');
             fetch('/api/global_notice', {credentials: 'same-origin'})
                 .then(async function(response) {
@@ -129,10 +127,16 @@
                     noticeLoading.hidden = true;
                     if (!result.notice) return;
                     noticeMessage.textContent = result.notice.message;
-                    if (result.notice.image_path) {
-                        noticeImage.src = '/static/' + result.notice.image_path
+                    const imagePath = typeof result.notice.image_path === 'string'
+                        ? result.notice.image_path.trim()
+                        : '';
+                    if (imagePath) {
+                        const noticeImage = document.createElement('img');
+                        noticeImage.className = 'notice-image';
+                        noticeImage.alt = 'Image attached to the college announcement';
+                        noticeImage.src = '/static/' + imagePath
                             .split('/').map(encodeURIComponent).join('/');
-                        noticeImage.hidden = false;
+                        notice.append(noticeImage);
                     }
                     notice.hidden = false;
                 })
