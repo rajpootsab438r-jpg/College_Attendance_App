@@ -173,12 +173,11 @@
     return getSeedData();
   }
 
-  async function getSeededStudents(program, part, section, date, period) {
+  async function getSeededStudents(program, part, date, period) {
     const seed = await getSeedData();
     if (!seed) return null;
     const classData = seed.classes.filter(item =>
-      item.program === program && item.part === part &&
-      (!section || (item.section || 'A') === section)
+      item.program === program && item.part === part
     );
     if (!classData.length) return [];
     const savedStatuses = new Map();
@@ -187,7 +186,7 @@
         savedStatuses.set(String(record.student_id), record.status);
       }
     }
-    return classData.flatMap(classSection => classSection.students.map(student => ({
+    return classData.flatMap(classGroup => classGroup.students.map(student => ({
       ...student,
       saved_status: savedStatuses.get(String(student.id)) || ''
     })));

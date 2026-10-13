@@ -181,8 +181,6 @@
         .analytics-track { height: 9px; overflow: hidden; border-radius: 99px; background: #e9eef2; }
         .analytics-fill { height: 100%; border-radius: inherit; background: #198754; transition: width 0.35s ease; }
         .analytics-empty { color: #64748b; font-size: 13px; margin: 0; }
-        .bunk-alert { padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #9f1239; font-size: 13px; }
-        .bunk-alert strong { display: block; margin-bottom: 4px; }
     </style> 
     <script> 
         function toggleInputPassword(fieldId) { 
@@ -314,11 +312,6 @@
         <h3>🏆 {% if current_lang == 'ur' %}بہترین کارکردگی والے شعبے{% else %}Top-performing Departments{% endif %}</h3>
         <div class="analytics-list" id="department-tracker"><p class="analytics-empty">Loading department tracker...</p></div>
     </article>
-    <article class="card analytics-card">
-        <h3>🚨 {% if current_lang == 'ur' %}زیادہ غیر حاضری والے سیکشن{% else %}Class Bunk Alert Matrix{% endif %}</h3>
-        <p class="analytics-status">Sections at or above a 30% absence rate</p>
-        <div class="analytics-list" id="bunk-alerts"><p class="analytics-empty">Loading section alerts...</p></div>
-    </article>
 </section>
 
 <div class="grid" style="margin-bottom:20px;">
@@ -402,9 +395,6 @@
                 <select id="student-part" name="part" data-academic-part required disabled>
                     <option value="">-- Select Part / Semester --</option>
                 </select>
-                <select id="student-section" name="section" data-academic-section required disabled>
-                    <option value="">-- Select Section --</option>
-                </select>
                 <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button>
             </form>
         </div>
@@ -424,9 +414,6 @@
                 </select>
                 <select id="scan-part" data-academic-part required disabled>
                     <option value="">-- Select Part / Semester --</option>
-                </select>
-                <select id="scan-section" data-academic-section required disabled>
-                    <option value="">-- Select Section --</option>
                 </select>
             </div>
             <button id="scan-students-button" type="button">Scan image (OCR)</button>
@@ -468,13 +455,6 @@
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Contact (Optional)</label><input type="text" name="phone_number" value="{{ edit_student.phone_number if edit_student.phone_number else '' }}"></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Program</label><input type="text" name="program" value="{{ edit_student.program }}" required></div>
             <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Part/Semester</label><input type="text" name="part" value="{{ edit_student.part }}" required></div>
-            <div style="flex:1;"><label style="font-size:12px;font-weight:bold;color:#666;">Section</label>
-                <select name="section" required>
-                    {% for academic_section in academic_sections %}
-                    <option value="{{ academic_section }}" {% if (edit_student.section or 'A')|upper == academic_section %}selected{% endif %}>{{ academic_section }}</option>
-                    {% endfor %}
-                </select>
-            </div>
         </div>
         <button type="submit" class="btn-success" style="width:auto; padding:10px 25px;">💾 Save Changes</button>
         <a href="/admin/dashboard" style="background:#6c757d; color:white; padding:12px 20px; border-radius:6px; text-decoration:none; font-weight:bold; font-size:14px; display:inline-block; margin-top:8px;">Cancel</a>
@@ -530,14 +510,14 @@
 
     <table> 
         <thead> 
-            <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Section</th><th>Attendance Status (%)</th><th>Actions</th></tr>
+            <tr><th>Roll No</th><th>Name</th><th>Father's Name</th><th>Contact</th><th>Program</th><th>Part</th><th>Attendance Status (%)</th><th>Actions</th></tr>
         </thead> 
         <tbody id="admin-students-body">
             {% for student in students %} 
             <tr> 
                 <td><b>{{ student.roll_no }}</b></td> 
                 <td>{{ student.student_name }}</td><td>{{ student.father_name }}</td><td>{{ student.phone_number if student.phone_number else '-' }}</td> 
-                <td>{{ student.program }}</td><td>{{ student.part }}</td><td>{{ student.section or 'A' }}</td>
+                <td>{{ student.program }}</td><td>{{ student.part }}</td>
                 <!-- ⚡ FIXED LINK NODE: Connects frontend directly with individual print data arrays in app.py -->
                 <td style="color: #198754; font-weight: bold;">
                     {{ student.percentage }}% 
@@ -596,7 +576,7 @@
 
     function renderFallback(text) {
       tableBody.innerHTML = '';
-      tableBody.innerHTML = `<tr><td colspan="9" role="status">${escapeHtml(text)}</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="8" role="status">${escapeHtml(text)}</td></tr>`;
     }
 
     function renderStudents(payload) {
@@ -613,7 +593,6 @@
             <td>${escapeHtml(student.phone_number || '-')}</td>
             <td>${escapeHtml(student.program || '-')}</td>
             <td>${escapeHtml(student.part || '-')}</td>
-            <td>${escapeHtml(student.section || 'A')}</td>
             <td style="color:#198754;font-weight:bold;">${escapeHtml(student.percentage ?? 0)}%
               <a href="/admin/download_student_report/${encodeURIComponent(student.id)}" target="_blank" style="margin-left:8px;background:#198754;color:white;padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;display:inline-block;">PDF 📄</a>
             </td>
@@ -723,10 +702,9 @@
     const percentageNode = document.getElementById('attendance-percentage');
     const countsNode = document.getElementById('attendance-counts');
     const departmentsNode = document.getElementById('department-tracker');
-    const alertsNode = document.getElementById('bunk-alerts');
     const actor = document.body.dataset.offlineActor;
     const cacheKey = `admin-analytics:${actor}`;
-    if (!statusNode || !gauge || !percentageNode || !countsNode || !departmentsNode || !alertsNode) return;
+    if (!statusNode || !gauge || !percentageNode || !countsNode || !departmentsNode) return;
 
     function addEmptyState(container, text) {
       const empty = document.createElement('p');
@@ -758,7 +736,7 @@
     }
 
     function renderAnalytics(data) {
-      if (!data || !data.overall || !Array.isArray(data.departments) || !Array.isArray(data.sections)) {
+      if (!data || !data.overall || !Array.isArray(data.departments)) {
         throw new Error('The analytics response has an invalid format.');
       }
       const percentage = Math.max(0, Math.min(100, Number(data.overall.percentage) || 0));
@@ -780,22 +758,6 @@
         addEmptyState(departmentsNode, 'No department attendance recorded today.');
       }
 
-      alertsNode.replaceChildren();
-      if (data.sections.length) {
-        data.sections.forEach(section => {
-          const alert = document.createElement('div');
-          alert.className = 'bunk-alert';
-          const title = document.createElement('strong');
-          title.textContent = `${section.program || 'Unassigned'} · ${section.part || 'Unassigned'}`;
-          const detail = document.createElement('span');
-          detail.textContent =
-            `${Number(section.absence_percentage) || 0}% absent — ${Number(section.absent_count) || 0} of ${Number(section.marked_count) || 0} marked`;
-          alert.append(title, detail);
-          alertsNode.append(alert);
-        });
-      } else {
-        addEmptyState(alertsNode, 'No sections currently meet the absence threshold.');
-      }
     }
 
     async function refreshAnalytics() {
@@ -838,7 +800,6 @@
       statusNode.textContent = loadError || 'No saved analytics are available offline yet.';
       countsNode.textContent = 'Connect to load today’s attendance data.';
       addEmptyState(departmentsNode, 'Department data is unavailable.');
-      addEmptyState(alertsNode, 'Section alerts are unavailable.');
     }
 
     refreshAnalytics();
@@ -848,11 +809,10 @@
   (function() {
     const academicPrograms = {{ academic_programs|tojson }};
 
-    function configureAcademicSelectors(programId, partId, sectionId) {
+    function configureAcademicSelectors(programId, partId) {
       const programSelect = document.getElementById(programId);
       const partSelect = document.getElementById(partId);
-      const sectionSelect = document.getElementById(sectionId);
-      if (!programSelect || !partSelect || !sectionSelect) return;
+      if (!programSelect || !partSelect) return;
 
       academicPrograms.forEach(program => {
         programSelect.add(new Option(program.display_name, program.key));
@@ -863,24 +823,19 @@
           program => program.key === programSelect.value
         );
         const previousPart = partSelect.value;
-        const previousSection = sectionSelect.value;
         partSelect.replaceChildren(new Option('-- Select Part / Semester --', ''));
-        sectionSelect.replaceChildren(new Option('-- Select Section --', ''));
         partSelect.disabled = !selectedProgram;
-        sectionSelect.disabled = !selectedProgram;
         if (!selectedProgram) return;
         selectedProgram.parts.forEach(part => partSelect.add(new Option(part, part)));
-        selectedProgram.sections.forEach(section => sectionSelect.add(new Option(section, section)));
         if (selectedProgram.parts.includes(previousPart)) partSelect.value = previousPart;
-        if (selectedProgram.sections.includes(previousSection)) sectionSelect.value = previousSection;
       }
 
       programSelect.addEventListener('change', updateClassOptions);
       updateClassOptions();
     }
 
-    configureAcademicSelectors('student-program', 'student-part', 'student-section');
-    configureAcademicSelectors('scan-program', 'scan-part', 'scan-section');
+    configureAcademicSelectors('student-program', 'student-part');
+    configureAcademicSelectors('scan-program', 'scan-part');
   })();
 </script>
 <script>
@@ -976,10 +931,9 @@
     const status = document.getElementById('scan-status');
     const program = document.getElementById('scan-program').value;
     const part = document.getElementById('scan-part').value;
-    const section = document.getElementById('scan-section').value;
     const text = document.getElementById('scan-students-text').value.trim();
-    if (!program || !part || !section) {
-      status.textContent = 'Select the program, part/semester, and section for this list.';
+    if (!program || !part) {
+      status.textContent = 'Select the program and part/semester for this list.';
       return;
     }
     const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -996,8 +950,7 @@
         father_name: columns[2],
         phone_number: columns[3] || '',
         program: program,
-        part: part,
-        section: section
+        part: part
       });
     }
     if (!rows.length) {

@@ -29,9 +29,6 @@ ACADEMIC_PROGRAM_SEEDS = (
     ('DIT', 'DIT (Diploma in Information Technology)', 'Professional Diploma', ('Part-1', 'Part-2')),
     ('D.Com', 'D.Com (Diploma in Commerce)', 'Professional Diploma', ('Part-1', 'Part-2')),
 )
-ACADEMIC_SECTIONS = ('A', 'B', 'C', 'D')
-
-
 def get_database_url():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
@@ -77,8 +74,8 @@ def setup_database():
                 student_columns = {
                     row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()
                 }
-                if 'section' not in student_columns:
-                    conn.execute("ALTER TABLE students ADD COLUMN section TEXT NOT NULL DEFAULT 'A'")
+                if 'section' in student_columns:
+                    conn.execute("ALTER TABLE students DROP COLUMN section")
                 for table_name in ('teachers', 'students'):
                     columns = {
                         row[1] for row in
@@ -94,20 +91,20 @@ def setup_database():
                     conn.execute("ALTER TABLE attendance ADD COLUMN client_timestamp TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
                 conn.execute("CREATE TABLE IF NOT EXISTS global_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, image_path TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL, sections TEXT NOT NULL)")
-                conn.execute("CREATE TABLE IF NOT EXISTS academic_class_options (program_key TEXT NOT NULL, part TEXT NOT NULL, section TEXT NOT NULL, PRIMARY KEY (program_key, part, section))")
+                conn.execute("DROP TABLE IF EXISTS academic_class_options")
+                conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL)")
+                program_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(academic_programs)").fetchall()
+                }
+                if 'sections' in program_columns:
+                    conn.execute("ALTER TABLE academic_programs DROP COLUMN sections")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
                     conn.execute(
-                        "INSERT INTO academic_programs (program_key, display_name, level, parts, sections) "
-                        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (program_key) DO UPDATE SET "
+                        "INSERT INTO academic_programs (program_key, display_name, level, parts) "
+                        "VALUES (?, ?, ?, ?) ON CONFLICT (program_key) DO UPDATE SET "
                         "display_name = excluded.display_name, level = excluded.level, "
-                        "parts = excluded.parts, sections = excluded.sections",
-                        (program_key, display_name, level, ','.join(parts), ','.join(ACADEMIC_SECTIONS))
-                    )
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO academic_class_options (program_key, part, section) "
-                        "VALUES (?, ?, ?)",
-                        [(program_key, part, section) for part in parts for section in ACADEMIC_SECTIONS]
+                        "parts = excluded.parts",
+                        (program_key, display_name, level, ','.join(parts))
                     )
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, display_name, username, password, total_periods) VALUES (?, ?, ?, ?, ?)", ("Punjab College", "Punjab College Admin", "admin1", "pc123", 8))
                 conn.execute("INSERT OR IGNORE INTO admins (college_name, display_name, username, password, total_periods) VALUES (?, ?, ?, ?, ?)", ("Superior College", "Superior College Admin", "admin2", "sc123", 5))
@@ -174,7 +171,7 @@ def setup_database():
                 )
                 """)
                 cursor.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_image TEXT")
-                cursor.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'A'")
+                cursor.execute("ALTER TABLE students DROP COLUMN IF EXISTS section")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS attendance (
                     id SERIAL PRIMARY KEY,
@@ -204,35 +201,23 @@ def setup_database():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+                cursor.execute("DROP TABLE IF EXISTS academic_class_options")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS academic_programs (
                     program_key TEXT PRIMARY KEY,
                     display_name TEXT NOT NULL,
                     level TEXT NOT NULL,
-                    parts TEXT NOT NULL,
-                    sections TEXT NOT NULL
+                    parts TEXT NOT NULL
                 )
                 """)
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS academic_class_options (
-                    program_key TEXT NOT NULL,
-                    part TEXT NOT NULL,
-                    section TEXT NOT NULL,
-                    PRIMARY KEY (program_key, part, section)
-                )
-                """)
+                cursor.execute("ALTER TABLE academic_programs DROP COLUMN IF EXISTS sections")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
                     cursor.execute(
-                        "INSERT INTO academic_programs (program_key, display_name, level, parts, sections) "
-                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (program_key) DO UPDATE SET "
+                        "INSERT INTO academic_programs (program_key, display_name, level, parts) "
+                        "VALUES (%s, %s, %s, %s) ON CONFLICT (program_key) DO UPDATE SET "
                         "display_name = EXCLUDED.display_name, level = EXCLUDED.level, "
-                        "parts = EXCLUDED.parts, sections = EXCLUDED.sections",
-                        (program_key, display_name, level, ','.join(parts), ','.join(ACADEMIC_SECTIONS))
-                    )
-                    cursor.executemany(
-                        "INSERT INTO academic_class_options (program_key, part, section) "
-                        "VALUES (%s, %s, %s) ON CONFLICT (program_key, part, section) DO NOTHING",
-                        [(program_key, part, section) for part in parts for section in ACADEMIC_SECTIONS]
+                        "parts = EXCLUDED.parts",
+                        (program_key, display_name, level, ','.join(parts))
                     )
                 cursor.execute(
                     "INSERT INTO admins (college_name, display_name, username, password, total_periods) "

@@ -219,7 +219,6 @@ def student_api_response(students, status_code=200):
             'phone_number': student.get('phone_number', ''),
             'program': student.get('program', ''),
             'part': student.get('part', ''),
-            'section': student.get('section', 'A'),
             'saved_status': student.get('saved_status', ''),
             'percentage': student.get('percentage', 0)
         }
@@ -396,7 +395,7 @@ def normalize_meta_recipient(phone):
 
 def academic_program_options(cursor):
     cursor.execute(
-        'SELECT program_key, display_name, level, parts, sections '
+        'SELECT program_key, display_name, level, parts '
         'FROM academic_programs ORDER BY level, display_name'
     )
     return [
@@ -404,8 +403,7 @@ def academic_program_options(cursor):
             'key': row['program_key'],
             'display_name': row['display_name'],
             'level': row['level'],
-            'parts': row['parts'].split(','),
-            'sections': row['sections'].split(',')
+            'parts': row['parts'].split(',')
         }
         for row in cursor.fetchall()
     ]
@@ -622,16 +620,25 @@ def admin_broadcast_message():
         if conn is not None:
             conn.close()
 
-def validate_academic_class(cursor, program, part, section):
+def validate_academic_class(cursor, program, part):
     normalized_program = re.sub(r'[^a-z0-9]', '', program.lower())
     cursor.execute(
-        'SELECT p.program_key, o.part, o.section FROM academic_programs p '
-        'JOIN academic_class_options o ON o.program_key = p.program_key '
-        "WHERE LOWER(REPLACE(REPLACE(REPLACE(p.program_key, '-', ''), ' ', ''), '.', '')) = %s "
-        'AND LOWER(o.part) = LOWER(%s) AND UPPER(o.section) = UPPER(%s)',
-        (normalized_program, part.strip(), section.strip())
+        'SELECT program_key, parts FROM academic_programs '
+        "WHERE LOWER(REPLACE(REPLACE(REPLACE(program_key, '-', ''), ' ', ''), '.', '')) = %s",
+        (normalized_program,)
     )
-    return cursor.fetchone()
+    program_record = cursor.fetchone()
+    if not program_record:
+        return None
+    available_parts = program_record['parts'].split(',')
+    matching_part = next(
+        (available_part for available_part in available_parts
+         if available_part.casefold() == part.strip().casefold()),
+        None
+    )
+    if not matching_part:
+        return None
+    return {'program_key': program_record['program_key'], 'part': matching_part}
 
 
 def delete_student_record(cursor, student_id, college_id):
@@ -823,9 +830,6 @@ def admin_dashboard():
     academic_parts = sorted({
         part for program_config in academic_programs for part in program_config['parts']
     })
-    academic_sections = sorted({
-        section for program_config in academic_programs for section in program_config['sections']
-    })
     csrf_token = session.setdefault('admin_csrf_token', secrets.token_urlsafe(32))
     if admin_profile:
         current_admin_name = admin_profile['display_name'] or college_name
@@ -944,21 +948,19 @@ def admin_dashboard():
             phone_number = admin_request_value(request_values, 'phone_number')
             program = admin_request_value(request_values, 'program', required=True)
             part = admin_request_value(request_values, 'part', required=True)
-            section = admin_request_value(request_values, 'section') or 'A'
-            academic_class = validate_academic_class(cursor, program, part, section)
+            academic_class = validate_academic_class(cursor, program, part)
             if not academic_class:
                 conn.close()
                 return sync_json_response(
                     'error', 400,
-                    message='Select a program, part/semester, and section from the available class options.'
+                    message='Select a valid program and part/semester.'
                 )
             cursor.execute(
-                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, section, college_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
                 (
                     roll_no, student_name, father_name, phone_number,
-                    academic_class['program_key'], academic_class['part'],
-                    academic_class['section'], college_id
+                    academic_class['program_key'], academic_class['part'], college_id
                 )
             )
             conn.commit()
@@ -972,26 +974,24 @@ def admin_dashboard():
         elif action == 'edit_student_admin':
             # 🛠️ FIXED 100% OPTIONAL: Student phone number edit karte waqt khali chordne par string configuration crash nahi hogi
             phone_val = request.form.get('phone_number', '').strip()
-            section_val = request.form.get('section', 'A').strip() or 'A'
             academic_class = validate_academic_class(
                 cursor, request.form.get('program', '').strip(),
-                request.form.get('part', '').strip(), section_val
+                request.form.get('part', '').strip()
             )
             if not academic_class:
                 conn.close()
                 return sync_json_response(
                     'error', 400,
-                    message='Select a program, part/semester, and section from the available class options.'
+                    message='Select a valid program and part/semester.'
                 )
             cursor.execute(
                 'UPDATE students SET roll_no=%s, student_name=%s, father_name=%s, '
-                'phone_number=%s, program=%s, part=%s, section=%s '
+                'phone_number=%s, program=%s, part=%s '
                 'WHERE id=%s AND college_id=%s',
                 (
                     request.form['roll_no'], request.form['student_name'],
                     request.form['father_name'], phone_val, academic_class['program_key'],
-                    academic_class['part'], academic_class['section'],
-                    request.form['id'], college_id
+                    academic_class['part'], request.form['id'], college_id
                 )
             )
             conn.commit()
@@ -1063,7 +1063,7 @@ def admin_dashboard():
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_admin_name=current_admin_name, current_lang=current_lang,
                            academic_programs=academic_programs, academic_parts=academic_parts,
-                           academic_sections=academic_sections, csrf_token=csrf_token,
+                           csrf_token=csrf_token,
                            edit_teacher=edit_teacher_data, edit_student=edit_student_data)
 
 
@@ -1088,13 +1088,12 @@ def admin_analytics():
     cursor.execute(
         'SELECT s.program, s.part, COUNT(DISTINCT s.id) AS student_count, '
         'SUM(CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END) AS marked_count, '
-        'SUM(CASE WHEN a.status = %s THEN 1 ELSE 0 END) AS present_count, '
-        'SUM(CASE WHEN a.status = %s THEN 1 ELSE 0 END) AS absent_count '
+        'SUM(CASE WHEN a.status = %s THEN 1 ELSE 0 END) AS present_count '
         'FROM students s LEFT JOIN attendance a '
         'ON a.student_roll = s.roll_no AND a.college_id = s.college_id '
         'AND a.attendance_date = %s '
         'WHERE s.college_id = %s GROUP BY s.program, s.part',
-        ('Present', 'Absent', attendance_date, college_id)
+        ('Present', attendance_date, college_id)
     )
     class_rows = cursor.fetchall()
     conn.close()
@@ -1102,11 +1101,9 @@ def admin_analytics():
     marked_count = int(totals['marked_count'] or 0)
     present_count = int(totals['present_count'] or 0)
     departments = {}
-    sections = []
     for row in class_rows:
         row_marked = int(row['marked_count'] or 0)
         row_present = int(row['present_count'] or 0)
-        row_absent = int(row['absent_count'] or 0)
         program = row['program'] or 'Unassigned'
         department = departments.setdefault(
             program,
@@ -1115,15 +1112,6 @@ def admin_analytics():
         department['student_count'] += int(row['student_count'] or 0)
         department['marked_count'] += row_marked
         department['present_count'] += row_present
-        absence_percentage = round(row_absent * 100 / row_marked, 1) if row_marked else 0
-        if row_absent and absence_percentage >= 30:
-            sections.append({
-                'program': program,
-                'part': row['part'] or 'Unassigned',
-                'absent_count': row_absent,
-                'marked_count': row_marked,
-                'absence_percentage': absence_percentage
-            })
 
     department_stats = [
         {
@@ -1143,10 +1131,6 @@ def admin_analytics():
         ),
         reverse=True
     )
-    sections.sort(
-        key=lambda section: (section['absence_percentage'], section['absent_count']),
-        reverse=True
-    )
     return offline_seed_response({
         'date': attendance_date,
         'overall': {
@@ -1154,9 +1138,7 @@ def admin_analytics():
             'present_count': present_count,
             'marked_count': marked_count
         },
-        'departments': department_stats[:5],
-        'sections': sections,
-        'absence_threshold': 30
+        'departments': department_stats[:5]
     })
 
 
@@ -1177,12 +1159,11 @@ def import_students():
         if not isinstance(row, dict):
             return jsonify({"error": f"Row {row_number} is invalid."}), 400
         fields = {}
-        for field in ('roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part', 'section'):
+        for field in ('roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part'):
             value = row.get(field, '')
             if not isinstance(value, str):
                 return jsonify({"error": f"Row {row_number}: {field} must be text."}), 400
             fields[field] = value.strip()
-        fields['section'] = fields['section'] or 'A'
         if not all(fields[field] for field in ('roll_no', 'student_name', 'father_name', 'program', 'part')):
             return jsonify({"error": f"Row {row_number} is missing a required value."}), 400
         clean_rows.append(fields)
@@ -1199,24 +1180,21 @@ def import_students():
             return sync_json_response(imported=0, skipped=len(clean_rows))
         imported = 0
         for row_number, row in enumerate(clean_rows, start=1):
-            academic_class = validate_academic_class(
-                cursor, row['program'], row['part'], row['section']
-            )
+            academic_class = validate_academic_class(cursor, row['program'], row['part'])
             if not academic_class:
                 return jsonify({
                     'error': (
-                        f"Row {row_number} has a program, part/semester, or section "
+                        f"Row {row_number} has a program or part/semester "
                         "that is not in the academic class catalog."
                     )
                 }), 400
             cursor.execute(
                 'INSERT INTO students '
-                '(roll_no, student_name, father_name, phone_number, program, part, section, college_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
+                '(roll_no, student_name, father_name, phone_number, program, part, college_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s) '
                 'ON CONFLICT (roll_no, college_id) DO NOTHING',
                 (row['roll_no'], row['student_name'], row['father_name'], row['phone_number'],
-                 academic_class['program_key'], academic_class['part'],
-                 academic_class['section'], session['user_id'])
+                 academic_class['program_key'], academic_class['part'], session['user_id'])
             )
             imported += cursor.rowcount
         conn.commit()
@@ -1734,7 +1712,7 @@ def offline_seed_data():
     try:
         cursor = conn.cursor()
         cursor.execute(
-            'SELECT id, program, part, section, roll_no, student_name, father_name '
+            'SELECT id, program, part, roll_no, student_name, father_name '
             'FROM students WHERE college_id = %s ORDER BY program, part, roll_no',
             (college_id,)
         )
@@ -1777,21 +1755,18 @@ def offline_seed_data():
             normalized_program = re.sub(r'[^a-z0-9]', '', student['program'].lower())
             program = canonical_programs.get(normalized_program, student['program'])
             part = student['part']
-            section = student['section'] or 'A'
-            class_key = (program, part, section)
+            class_key = (program, part)
             if class_key not in class_map:
                 class_map[class_key] = {
                     'program': program,
                     'part': part,
-                    'section': section,
                     'students': []
                 }
             class_map[class_key]['students'].append({
                 'id': student['id'],
                 'roll_no': student['roll_no'],
                 'student_name': student['student_name'],
-                'father_name': student['father_name'] or '',
-                'section': section
+                'father_name': student['father_name'] or ''
             })
 
         return offline_seed_response({
@@ -1803,8 +1778,7 @@ def offline_seed_data():
                 {
                     'name': program_config['key'],
                     'display_name': program_config['display_name'],
-                    'parts': program_config['parts'],
-                    'sections': program_config['sections']
+                    'parts': program_config['parts']
                 }
                 for program_config in seeded_programs
             ],
@@ -1826,7 +1800,6 @@ def teacher_dashboard():
     college_id = session.get('college_id')
     selected_program = request.args.get('program')
     selected_part = request.args.get('part')
-    selected_section = request.args.get('section', '')
     selected_date = request.args.get('attendance_date', datetime.today().strftime('%Y-%m-%d'))
     selected_period = request.args.get('period_no', '1')
     current_lang = session.get('lang', 'en')
@@ -1840,9 +1813,6 @@ def teacher_dashboard():
     academic_programs = academic_program_options(cursor)
     academic_parts = sorted({
         part for program_config in academic_programs for part in program_config['parts']
-    })
-    academic_sections = sorted({
-        section for program_config in academic_programs for section in program_config['sections']
     })
     try:
         period_number = int(selected_period)
@@ -1862,15 +1832,12 @@ def teacher_dashboard():
             "AND LOWER(REPLACE(REPLACE(REPLACE(program, '-', ''), ' ', ''), '.', '')) = %s "
             "AND LOWER(part) = LOWER(%s)"
         )
-        query_params = [
+        query_params = (
             college_id,
             re.sub(r'[^a-z0-9]', '', selected_program.lower()),
             selected_part
-        ]
-        if selected_section:
-            query += ' AND UPPER(section) = UPPER(%s)'
-            query_params.append(selected_section)
-        cursor.execute(query, tuple(query_params))
+        )
+        cursor.execute(query, query_params)
         raw_students = cursor.fetchall()
         for s in raw_students:
             s_dict = dict(s)
@@ -1884,8 +1851,7 @@ def teacher_dashboard():
         return student_api_response(students)
     return render_template('attendance.html', students=students, subject=subject, teacher_name=teacher_name, 
                            selected_program=selected_program, selected_part=selected_part,
-                           selected_section=selected_section, academic_programs=academic_programs,
-                           academic_parts=academic_parts, academic_sections=academic_sections,
+                           academic_programs=academic_programs, academic_parts=academic_parts,
                            selected_date=selected_date, selected_period=selected_period, total_periods=total_periods, current_lang=current_lang)
 
 @app.route('/teacher/quick_attendance', methods=['POST'])
@@ -2044,7 +2010,7 @@ def download_master_erp_report():
         cursor = conn.cursor()
         cursor.execute(
             'SELECT s.id, s.roll_no, s.student_name, s.father_name, s.phone_number, '
-            's.program, s.part, s.section, COUNT(a.id) AS attendance_records, '
+            's.program, s.part, COUNT(a.id) AS attendance_records, '
             "SUM(CASE WHEN LOWER(TRIM(COALESCE(a.status, ''))) = 'present' THEN 1 ELSE 0 END) AS presents, "
             "SUM(CASE WHEN LOWER(TRIM(COALESCE(a.status, ''))) = 'absent' THEN 1 ELSE 0 END) AS absences, "
             "SUM(CASE WHEN LOWER(TRIM(COALESCE(a.status, ''))) = 'leave' THEN 1 ELSE 0 END) AS leaves "
@@ -2052,24 +2018,23 @@ def download_master_erp_report():
             'ON a.student_roll = s.roll_no AND a.college_id = s.college_id '
             'WHERE s.college_id = %s '
             'GROUP BY s.id, s.roll_no, s.student_name, s.father_name, s.phone_number, '
-            's.program, s.part, s.section ORDER BY s.program, s.part, s.section, s.roll_no',
+            's.program, s.part ORDER BY s.program, s.part, s.roll_no',
             (session['user_id'],)
         )
         student_records = cursor.fetchall()
         cursor.execute(
-            'SELECT s.program, s.part, s.section, s.roll_no, s.student_name, '
+            'SELECT s.program, s.part, s.roll_no, s.student_name, '
             'a.attendance_date, a.period_no, a.status, a.marked_by '
             'FROM attendance a JOIN students s '
             'ON a.student_roll = s.roll_no AND a.college_id = s.college_id '
             'WHERE s.college_id = %s '
-            'ORDER BY s.program, s.part, s.section, s.roll_no, a.attendance_date, a.period_no',
+            'ORDER BY s.program, s.part, s.roll_no, a.attendance_date, a.period_no',
             (session['user_id'],)
         )
         attendance_records = cursor.fetchall()
         cursor.execute(
-            'SELECT p.program_key, o.part, o.section FROM academic_programs p '
-            'JOIN academic_class_options o ON o.program_key = p.program_key '
-            'ORDER BY p.level, p.display_name, o.part, o.section'
+            'SELECT program_key, parts FROM academic_programs '
+            'ORDER BY level, display_name'
         )
         class_options = cursor.fetchall()
         cursor.execute('SELECT college_name FROM admins WHERE id = %s', (session['user_id'],))
@@ -2080,18 +2045,16 @@ def download_master_erp_report():
     finally:
         conn.close()
 
-    def class_key(program, part, section):
+    def class_key(program, part):
         return (
             re.sub(r'[^a-z0-9]', '', (program or '').lower()),
-            re.sub(r'[^a-z0-9]', '', (part or '').lower()),
-            (section or 'A').upper()
+            re.sub(r'[^a-z0-9]', '', (part or '').lower())
         )
 
     classes = {
-        class_key(option['program_key'], option['part'], option['section']): {
+        class_key(option['program_key'], part): {
             'program': option['program_key'],
-            'part': option['part'],
-            'section': option['section'],
+            'part': part,
             'students': 0,
             'attendance_records': 0,
             'presents': 0,
@@ -2099,13 +2062,13 @@ def download_master_erp_report():
             'leaves': 0
         }
         for option in class_options
+        for part in option['parts'].split(',')
     }
     for student in student_records:
-        key = class_key(student['program'], student['part'], student['section'])
+        key = class_key(student['program'], student['part'])
         class_data = classes.setdefault(key, {
             'program': student['program'],
             'part': student['part'],
-            'section': student['section'] or 'A',
             'students': 0,
             'attendance_records': 0,
             'presents': 0,
@@ -2135,10 +2098,10 @@ def download_master_erp_report():
     student_sheet = workbook.active
     student_sheet.title = 'Student Metrics'
     prepare_sheet(student_sheet, [
-        'Program', 'Part / Semester', 'Section', 'Roll Number', 'Student Name',
+        'Program', 'Part / Semester', 'Roll Number', 'Student Name',
         'Father Name', 'Parent Phone', 'Total Historical Attendance Records',
         'Presents', 'Absences', 'Leaves', 'Attendance Compliance %'
-    ], [24, 20, 12, 16, 28, 28, 20, 34, 14, 14, 12, 26])
+    ], [24, 20, 16, 28, 28, 20, 34, 14, 14, 12, 26])
     for student in student_records:
         presents = int(student['presents'] or 0)
         absences = int(student['absences'] or 0)
@@ -2146,8 +2109,8 @@ def download_master_erp_report():
         compliance = round(presents * 100 / eligible_records, 1) if eligible_records else 0
         student_sheet.append([
             excel_text(student['program']), excel_text(student['part']),
-            excel_text(student['section'] or 'A'), excel_text(student['roll_no']),
-            excel_text(student['student_name']), excel_text(student['father_name']),
+            excel_text(student['roll_no']), excel_text(student['student_name']),
+            excel_text(student['father_name']),
             excel_text(student['phone_number']), int(student['attendance_records'] or 0),
             presents, absences, int(student['leaves'] or 0), compliance
         ])
@@ -2155,13 +2118,13 @@ def download_master_erp_report():
 
     class_sheet = workbook.create_sheet('Class Summary')
     prepare_sheet(class_sheet, [
-        'Program', 'Part / Semester', 'Section', 'Registered Students',
+        'Program', 'Part / Semester', 'Registered Students',
         'Total Attendance Records', 'Presents', 'Absences', 'Leaves',
         'Attendance Compliance %'
-    ], [28, 20, 12, 22, 28, 14, 14, 12, 26])
+    ], [28, 20, 22, 28, 14, 14, 12, 26])
     for class_data in sorted(
         classes.values(),
-        key=lambda item: (item['program'].lower(), item['part'].lower(), item['section'])
+        key=lambda item: (item['program'].lower(), item['part'].lower())
     ):
         present = class_data['presents']
         absent = class_data['absences']
@@ -2169,22 +2132,22 @@ def download_master_erp_report():
         compliance = round(present * 100 / eligible_records, 1) if eligible_records else 0
         class_sheet.append([
             excel_text(class_data['program']), excel_text(class_data['part']),
-            excel_text(class_data['section']), class_data['students'],
-            class_data['attendance_records'], present, absent, class_data['leaves'],
+            class_data['students'], class_data['attendance_records'], present,
+            absent, class_data['leaves'],
             compliance
         ])
     class_sheet.auto_filter.ref = class_sheet.dimensions
 
     history_sheet = workbook.create_sheet('Attendance History')
     prepare_sheet(history_sheet, [
-        'Program', 'Part / Semester', 'Section', 'Roll Number', 'Student Name',
+        'Program', 'Part / Semester', 'Roll Number', 'Student Name',
         'Date', 'Period', 'Status', 'Marked By'
-    ], [28, 20, 12, 16, 28, 16, 12, 16, 24])
+    ], [28, 20, 16, 28, 16, 12, 16, 24])
     for record in attendance_records:
         history_sheet.append([
             excel_text(record['program']), excel_text(record['part']),
-            excel_text(record['section'] or 'A'), excel_text(record['roll_no']),
-            excel_text(record['student_name']), excel_text(record['attendance_date']),
+            excel_text(record['roll_no']), excel_text(record['student_name']),
+            excel_text(record['attendance_date']),
             int(record['period_no'] or 0), excel_text(record['status']),
             excel_text(record['marked_by'])
         ])
@@ -2229,7 +2192,7 @@ def download_student_report(student_id):
     rows_html = "".join([f"<tr><td style='border:1px solid #dee2e6;padding:10px;'>{r['attendance_date']}</td><td style='border:1px solid #dee2e6;padding:10px;text-align:center;'>Period {r['period_no']}</td><td style='border:1px solid #dee2e6;padding:10px;font-weight:bold;color:{'#28a745' if r['status']=='Present' else '#dc3545' if r['status']=='Absent' else '#ffc107' if r['status']=='Leave' else '#6f42c1'};'>{r['status']}</td><td style='border:1px solid #dee2e6;padding:10px;'>{r['marked_by']}</td></tr>" for r in records])
     if not records: rows_html = "<tr><td colspan='4' style='text-align:center;padding:20px;color:#6c757d;'>No attendance history logged yet.</td></tr>"
     
-    return f"""<html><head><title>Report_{roll}</title><style>body {{ font-family: 'Segoe UI', Arial; padding: 30px; color: #333; }} .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }} .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }} .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }} table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }} th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; }} .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; }} </style></head><body onload="window.print()"><div class="report-header"><h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2></div><div class="student-info"><div class="info-item"><b>Name:</b> {student['student_name']}</div><div class="info-item"><b>Father:</b> {student['father_name']}</div><div class="info-item"><b>Roll No:</b> {roll}</div><div class="info-item"><b>Class:</b> {student['program']} ({student['part']} · Section {student['section'] or 'A'})</div><div class="info-item"><b>Attendance:</b> <span class="badge-pct">{percentage}%</span></div></div><table><thead><tr><th>Date</th><th>Period</th><th>Status</th><th>Faculty</th></tr></thead><tbody>{rows_html}</tbody></table></body></html>"""
+    return f"""<html><head><title>Report_{roll}</title><style>body {{ font-family: 'Segoe UI', Arial; padding: 30px; color: #333; }} .report-header {{ border-bottom: 3px solid #198754; padding-bottom: 15px; margin-bottom: 25px; }} .student-info {{ background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px; display: flex; flex-wrap: wrap; gap: 20px; }} .info-item {{ flex: 1; min-width: 200px; font-size: 14px; }} table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }} th {{ background-color: #198754 !important; color: white !important; font-weight: bold; border: 1px solid #198754; padding: 12px; }} .badge-pct {{ background: #198754; color: white; padding: 4px 10px; border-radius: 20px; }} </style></head><body onload="window.print()"><div class="report-header"><h2 style="margin:0;color:#198754;">📊 ÇUKUR EDUCATIONAL MATRIX LOGS</h2></div><div class="student-info"><div class="info-item"><b>Name:</b> {student['student_name']}</div><div class="info-item"><b>Father:</b> {student['father_name']}</div><div class="info-item"><b>Roll No:</b> {roll}</div><div class="info-item"><b>Class:</b> {student['program']} ({student['part']})</div><div class="info-item"><b>Attendance:</b> <span class="badge-pct">{percentage}%</span></div></div><table><thead><tr><th>Date</th><th>Period</th><th>Status</th><th>Faculty</th></tr></thead><tbody>{rows_html}</tbody></table></body></html>"""
 
 @app.route('/logout')
 def logout():
