@@ -414,13 +414,13 @@ WHATSAPP_CONTEXT_PATTERN = re.compile(
     rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
     r'(?:(?P<part_type>part|semester|sem)\s*[- ]*|[- ]*)'
     r'(?P<part>\d+)\s+(?:roll\s*(?:no\.?\s*)?)?'
-    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)\b'
+    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b'
 )
 WHATSAPP_ROLL_ONLY_PATTERN = re.compile(
     rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
     r'(?:(?:part|semester|sem)\s*)?'
     r'(?:roll\s*(?:no\.?\s*)?)?'
-    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)\b'
+    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b'
 )
 WHATSAPP_INTENT_PATTERN = re.compile(r'\b(report|attendance|status)\b', re.IGNORECASE)
 WHATSAPP_UNVERIFIED_REPLY = (
@@ -460,16 +460,36 @@ def extract_meta_whatsapp_messages(payload):
             if not isinstance(messages, list):
                 continue
             for message in messages:
-                if not isinstance(message, dict) or message.get('type') != 'text':
+                if not isinstance(message, dict):
                     continue
                 sender = message.get('from')
-                text_payload = message.get('text')
-                text = text_payload.get('body') if isinstance(text_payload, dict) else None
+                message_type = message.get('type')
+                text = None
+                button_id = None
+                if message_type == 'text':
+                    text_payload = message.get('text')
+                    text = text_payload.get('body') if isinstance(text_payload, dict) else None
+                elif message_type == 'interactive':
+                    interactive = message.get('interactive')
+                    button_reply = (
+                        interactive.get('button_reply')
+                        if isinstance(interactive, dict) else None
+                    )
+                    button_id = (
+                        button_reply.get('id') if isinstance(button_reply, dict) else None
+                    )
                 if (
                     isinstance(sender, str) and sender.strip() and
-                    isinstance(text, str) and text.strip()
+                    (
+                        (isinstance(text, str) and text.strip()) or
+                        (isinstance(button_id, str) and button_id.strip())
+                    )
                 ):
-                    parsed_messages.append((sender.strip(), text.strip()))
+                    parsed_messages.append((
+                        sender.strip(),
+                        text.strip() if isinstance(text, str) else '',
+                        button_id.strip() if isinstance(button_id, str) else None
+                    ))
     return parsed_messages
 
 
@@ -498,7 +518,7 @@ def parse_whatsapp_context(message):
         'part': part,
         'part_type': 'part' if part_type in (None, 'part') else 'semester',
         'roll': str(int(match.group('roll'))),
-        'intent': match.group('intent').lower()
+        'intent': (match.group('intent') or 'status').lower()
     }
 
 
@@ -632,6 +652,71 @@ def dispatch_meta_whatsapp_message(recipient, message):
     response.raise_for_status()
 
 
+def dispatch_meta_whatsapp_menu(recipient):
+    access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
+    response = requests.post(
+        f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        },
+        json={
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': recipient,
+            'type': 'interactive',
+            'interactive': {
+                'type': 'button',
+                'body': {
+                    'text': (
+                        'Assalamu Alaikum! CAS Portal Intelligent AI Assistant mein '
+                        'khush-amdeed. Apni matlooba report ke liye niche diye gaye '
+                        'buttons mein se kisi aik par click karein.'
+                    )
+                },
+                'action': {
+                    'buttons': [
+                        {
+                            'type': 'reply',
+                            'reply': {'id': 'btn_status', 'title': '📋 Bache Ka Status'}
+                        },
+                        {
+                            'type': 'reply',
+                            'reply': {'id': 'btn_report', 'title': '📊 Attendance Report'}
+                        },
+                        {
+                            'type': 'reply',
+                            'reply': {'id': 'btn_admin', 'title': '📞 Admin Se Rabta'}
+                        }
+                    ]
+                }
+            }
+        },
+        timeout=(3.05, 10)
+    )
+    response.raise_for_status()
+
+
+WHATSAPP_BUTTON_REPLIES = {
+    'btn_status': (
+        "Shukriya! Apne bache ka live status jan'ne ke liye, apna Class aur Roll Number "
+        'is exact format mein bheinjein: FAIT 301'
+    ),
+    'btn_report': (
+        'Shukriya! Purani absent dates nikalne ke liye, apni credentials is format mein '
+        'bheinjein: FAIT 301 Report'
+    ),
+    'btn_admin': (
+        'Management Portal Helplines: 03426600749. Kisi bhi masle ki surat mein is number '
+        'par direct rabta karein.'
+    )
+}
+WHATSAPP_MENU_TRIGGER_PATTERN = re.compile(
+    r'\b(?:hi|hello|assalamu\s+alaikum|aaoa|menu|bot)\b',
+    re.IGNORECASE
+)
+
+
 def academic_program_options(cursor):
     cursor.execute(
         'SELECT program_key, display_name, level, parts, sections '
@@ -679,15 +764,21 @@ def whatsapp_webhook():
 
     conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        for sender, text in messages:
+        cursor = None
+        for sender, text, button_id in messages:
             text_clean = text.lower().strip()
+            if button_id in WHATSAPP_BUTTON_REPLIES:
+                dispatch_meta_whatsapp_message(sender, WHATSAPP_BUTTON_REPLIES[button_id])
+                continue
+            if WHATSAPP_MENU_TRIGGER_PATTERN.search(text_clean):
+                dispatch_meta_whatsapp_menu(sender)
+                continue
+
             context = parse_whatsapp_context(text_clean)
-            intent_match = WHATSAPP_INTENT_PATTERN.search(text_clean)
-            intent = context['intent'] if context else (
-                intent_match.group(1).lower() if intent_match else None
-            )
+            intent = context['intent'] if context else None
+            if conn is None:
+                conn = get_db_connection()
+                cursor = conn.cursor()
             student = find_whatsapp_student(cursor, sender, context)
             if not student:
                 reply = WHATSAPP_UNVERIFIED_REPLY
