@@ -422,6 +422,10 @@ WHATSAPP_ROLL_ONLY_PATTERN = re.compile(
     r'(?:roll\s*(?:no\.?\s*)?)?'
     r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b'
 )
+WHATSAPP_ROLL_NUMBER_PATTERN = re.compile(
+    r'\broll\s*(?:no\.?\s*)?(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b',
+    re.IGNORECASE
+)
 WHATSAPP_INTENT_PATTERN = re.compile(r'\b(report|attendance|status)\b', re.IGNORECASE)
 WHATSAPP_UNVERIFIED_REPLY = (
     "We could not verify your records. Please reply with your child's credentials in this exact "
@@ -466,6 +470,7 @@ def extract_meta_whatsapp_messages(payload):
                 message_type = message.get('type')
                 text = None
                 button_id = None
+                list_id = None
                 if message_type == 'text':
                     text_payload = message.get('text')
                     text = text_payload.get('body') if isinstance(text_payload, dict) else None
@@ -478,17 +483,26 @@ def extract_meta_whatsapp_messages(payload):
                     button_id = (
                         button_reply.get('id') if isinstance(button_reply, dict) else None
                     )
+                    list_reply = (
+                        interactive.get('list_reply')
+                        if isinstance(interactive, dict) else None
+                    )
+                    list_id = (
+                        list_reply.get('id') if isinstance(list_reply, dict) else None
+                    )
                 if (
                     isinstance(sender, str) and sender.strip() and
                     (
                         (isinstance(text, str) and text.strip()) or
-                        (isinstance(button_id, str) and button_id.strip())
+                        (isinstance(button_id, str) and button_id.strip()) or
+                        (isinstance(list_id, str) and list_id.strip())
                     )
                 ):
                     parsed_messages.append((
                         sender.strip(),
                         text.strip() if isinstance(text, str) else '',
-                        button_id.strip() if isinstance(button_id, str) else None
+                        button_id.strip() if isinstance(button_id, str) else None,
+                        list_id.strip() if isinstance(list_id, str) else None
                     ))
     return parsed_messages
 
@@ -522,6 +536,16 @@ def parse_whatsapp_context(message):
     }
 
 
+def parse_whatsapp_roll_context(message):
+    match = WHATSAPP_ROLL_NUMBER_PATTERN.search(message.lower().strip())
+    if not match:
+        return None
+    return {
+        'roll': str(int(match.group('roll'))),
+        'intent': (match.group('intent') or 'status').lower()
+    }
+
+
 def normalized_whatsapp_part(part):
     return re.sub(r'[^a-z0-9]', '', str(part).lower())
 
@@ -533,7 +557,7 @@ def normalized_whatsapp_phone(phone):
 
 def find_whatsapp_student(cursor, sender, context):
     student_columns = 'id, roll_no, student_name, phone_number, program, part, college_id'
-    if context:
+    if context and context.get('program'):
         normalized_program = re.sub(r'[^a-z0-9]', '', context['program'].lower())
         cursor.execute(
             'SELECT ' + student_columns + ' FROM students '
@@ -555,9 +579,16 @@ def find_whatsapp_student(cursor, sender, context):
     normalized_sender = normalized_whatsapp_phone(sender)
     if not normalized_sender:
         return None
-    cursor.execute(
-        'SELECT ' + student_columns + ' FROM students WHERE phone_number IS NOT NULL'
-    )
+    if context and context.get('roll'):
+        cursor.execute(
+            'SELECT ' + student_columns + ' FROM students '
+            'WHERE roll_no = %s AND phone_number IS NOT NULL',
+            (context['roll'],)
+        )
+    else:
+        cursor.execute(
+            'SELECT ' + student_columns + ' FROM students WHERE phone_number IS NOT NULL'
+        )
     students = []
     for student in cursor.fetchall():
         stored_phone = normalized_whatsapp_phone(student['phone_number'] or '')
@@ -670,23 +701,19 @@ def dispatch_meta_whatsapp_menu(recipient):
                 'body': {
                     'text': (
                         'Assalamu Alaikum! CAS Portal Intelligent AI Assistant mein '
-                        'khush-amdeed. Apni matlooba report ke liye niche diye gaye '
-                        'buttons mein se kisi aik par click karein.'
+                        'khush-amdeed. Apne bache ki report nikalne ke liye niche diye gaye '
+                        'academic programs mein se kisi aik ka chunao karein:'
                     )
                 },
                 'action': {
                     'buttons': [
                         {
                             'type': 'reply',
-                            'reply': {'id': 'btn_status', 'title': '📋 Bache Ka Status'}
+                            'reply': {'id': 'stream_inter', 'title': '🏫 Inter Programs (11th/12th)'}
                         },
                         {
                             'type': 'reply',
-                            'reply': {'id': 'btn_report', 'title': '📊 Attendance Report'}
-                        },
-                        {
-                            'type': 'reply',
-                            'reply': {'id': 'btn_admin', 'title': '📞 Admin Se Rabta'}
+                            'reply': {'id': 'stream_bs', 'title': '🎓 BS Degrees & Diplomas'}
                         }
                     ]
                 }
@@ -695,6 +722,105 @@ def dispatch_meta_whatsapp_menu(recipient):
         timeout=(3.05, 10)
     )
     response.raise_for_status()
+
+
+def dispatch_meta_whatsapp_list(recipient, header, body, rows):
+    access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
+    response = requests.post(
+        f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        },
+        json={
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': recipient,
+            'type': 'interactive',
+            'interactive': {
+                'type': 'list',
+                'header': {'type': 'text', 'text': header},
+                'body': {'text': body},
+                'action': {
+                    'button': 'Choose Program',
+                    'sections': [{
+                        'title': 'Academic Programs',
+                        'rows': [
+                            {'id': row_id, 'title': title}
+                            for row_id, title in rows
+                        ]
+                    }]
+                }
+            }
+        },
+        timeout=(3.05, 10)
+    )
+    response.raise_for_status()
+
+
+WHATSAPP_STREAM_BUTTONS = {
+    'stream_inter': 'intermediate',
+    'stream_bs': 'bs'
+}
+WHATSAPP_PROGRAM_ROWS = {
+    'intermediate': [
+        ('cls_fa', 'FA (Arts)'),
+        ('cls_fait', 'FA IT (Arts in IT)'),
+        ('cls_fscmed', 'FSc Pre-Medical'),
+        ('cls_fsceng', 'FSc Pre-Engineering'),
+        ('cls_ics', 'ICS (Computer Science)'),
+        ('cls_icom', 'I.Com (Commerce)'),
+        ('cls_gensci', 'General Science')
+    ],
+    'bs': [
+        ('cls_bscs', 'BS-CS'),
+        ('cls_bsit', 'BS-IT'),
+        ('cls_bscomm', 'BS Commerce'),
+        ('cls_bseng', 'BS English'),
+        ('cls_bschem', 'BS Chemistry'),
+        ('cls_bsphy', 'BS Physics'),
+        ('cls_bsmath', 'BS Mathematics'),
+        ('cls_bszoo', 'BS Zoology'),
+        ('cls_bsbot', 'BS Botany'),
+        ('cls_bspsy', 'BS Psychology'),
+        ('cls_bba', 'BBA'),
+        ('cls_dit', 'DIT Diploma'),
+        ('cls_dcom', 'D.Com Diploma')
+    ]
+}
+WHATSAPP_CLASS_SELECTION_IDS = {
+    row_id for rows in WHATSAPP_PROGRAM_ROWS.values() for row_id, _ in rows
+}
+WHATSAPP_PROGRAM_SELECTION_REPLY = (
+    'Shukriya! Aap ne program selection mehfooz kar li hai. Ab bache ka roll number '
+    'nikalne ke liye is exact format mein reply bheinjein: Roll No [X] (Example: Roll No 15)'
+)
+WHATSAPP_LIST_TRIGGER_PATTERN = re.compile(r'^(?:1|2)$')
+
+
+def dispatch_meta_program_list(recipient, stream):
+    if stream == 'intermediate':
+        dispatch_meta_whatsapp_list(
+            recipient,
+            'Intermediate Academic Streams',
+            'Niche diye gaye pop-up dropdown menu se bache ki sahi class select karein:',
+            WHATSAPP_PROGRAM_ROWS['intermediate']
+        )
+        return
+
+    rows = WHATSAPP_PROGRAM_ROWS['bs']
+    dispatch_meta_whatsapp_list(
+        recipient,
+        'BS Programs & Vocational Diplomas',
+        'Niche diye gaye pop-up dropdown menu se bache ki sahi degree stream select karein:',
+        rows[:10]
+    )
+    dispatch_meta_whatsapp_list(
+        recipient,
+        'More BS Programs & Diplomas',
+        'Mazeed BS programs aur vocational diplomas yahan se select karein:',
+        rows[10:]
+    )
 
 
 WHATSAPP_BUTTON_REPLIES = {
@@ -765,16 +891,29 @@ def whatsapp_webhook():
     conn = None
     try:
         cursor = None
-        for sender, text, button_id in messages:
+        for sender, text, button_id, list_id in messages:
             text_clean = text.lower().strip()
+            if WHATSAPP_LIST_TRIGGER_PATTERN.fullmatch(text_clean):
+                dispatch_meta_whatsapp_menu(sender)
+                continue
             if button_id in WHATSAPP_BUTTON_REPLIES:
                 dispatch_meta_whatsapp_message(sender, WHATSAPP_BUTTON_REPLIES[button_id])
+                continue
+            if button_id in WHATSAPP_STREAM_BUTTONS:
+                dispatch_meta_program_list(sender, WHATSAPP_STREAM_BUTTONS[button_id])
                 continue
             if WHATSAPP_MENU_TRIGGER_PATTERN.search(text_clean):
                 dispatch_meta_whatsapp_menu(sender)
                 continue
+            if list_id in WHATSAPP_CLASS_SELECTION_IDS:
+                dispatch_meta_whatsapp_message(
+                    sender, WHATSAPP_PROGRAM_SELECTION_REPLY
+                )
+                continue
 
             context = parse_whatsapp_context(text_clean)
+            if context is None:
+                context = parse_whatsapp_roll_context(text_clean)
             intent = context['intent'] if context else None
             if conn is None:
                 conn = get_db_connection()
