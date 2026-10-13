@@ -1016,7 +1016,7 @@ def whatsapp_webhook():
             else:
                 reply = whatsapp_attendance_reply(cursor, student, intent)
             dispatch_meta_whatsapp_message(sender, reply)
-        return '', 200
+        return jsonify({'status': 'received'}), 200
     except MetaWhatsAppConfigurationError as error:
         app.logger.error('Meta WhatsApp API configuration error: %s', error)
         return jsonify({'status': 'error', 'message': 'WhatsApp messaging is not configured.'}), 503
@@ -1026,6 +1026,9 @@ def whatsapp_webhook():
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
         app.logger.exception('WhatsApp webhook database operation failed.')
         return jsonify({'status': 'error', 'message': 'Attendance records are temporarily unavailable.'}), 503
+    except Exception:
+        app.logger.exception('Unexpected WhatsApp webhook processing failure.')
+        return jsonify({'status': 'error', 'message': 'WhatsApp message processing failed.'}), 500
     finally:
         if conn is not None:
             conn.close()
