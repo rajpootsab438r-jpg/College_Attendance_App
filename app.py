@@ -502,6 +502,76 @@ def extract_meta_whatsapp_messages(payload):
     return parsed_messages
 
 
+def log_meta_whatsapp_status_updates(payload):
+    for entry in payload.get('entry', []):
+        if not isinstance(entry, dict):
+            continue
+        for change in entry.get('changes', []):
+            if not isinstance(change, dict):
+                continue
+            value = change.get('value')
+            if not isinstance(value, dict):
+                continue
+            statuses = value.get('statuses', [])
+            if not isinstance(statuses, list):
+                continue
+            for status in statuses:
+                if not isinstance(status, dict):
+                    continue
+                status_name = status.get('status', 'unknown')
+                message_id = status.get('id', 'unknown')
+                if status_name == 'failed':
+                    errors = status.get('errors', [])
+                    for error in errors:
+                        if not isinstance(error, dict):
+                            continue
+                        app.logger.error(
+                            'Meta WhatsApp delivery failed: message_id=%s code=%s '
+                            'subcode=%s title=%s detail=%s',
+                            message_id,
+                            error.get('code'),
+                            error.get('error_subcode'),
+                            error.get('title'),
+                            error.get('message')
+                        )
+                else:
+                    app.logger.info(
+                        'Meta WhatsApp delivery status: message_id=%s status=%s',
+                        message_id,
+                        status_name
+                    )
+
+
+def log_meta_whatsapp_request_error(error):
+    response = error.response
+    if response is None:
+        app.logger.error(
+            'Meta WhatsApp request failed before receiving an HTTP response: %s',
+            error
+        )
+        return
+    try:
+        response_payload = response.json()
+    except ValueError:
+        response_payload = {}
+    meta_error = (
+        response_payload.get('error')
+        if isinstance(response_payload, dict) else None
+    )
+    if not isinstance(meta_error, dict):
+        meta_error = {}
+    app.logger.error(
+        'Meta WhatsApp API rejected outbound message: HTTP %s code=%s subcode=%s '
+        'type=%s fbtrace_id=%s message=%s',
+        response.status_code,
+        meta_error.get('code'),
+        meta_error.get('error_subcode'),
+        meta_error.get('type'),
+        meta_error.get('fbtrace_id'),
+        meta_error.get('message')
+    )
+
+
 def parse_whatsapp_context(message):
     text_clean = message.lower().strip()
     match = WHATSAPP_CONTEXT_PATTERN.search(text_clean)
@@ -889,6 +959,7 @@ def whatsapp_webhook():
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return '', 200
+        log_meta_whatsapp_status_updates(payload)
         messages = extract_meta_whatsapp_messages(payload)
     except Exception:
         app.logger.exception('Could not parse the incoming Meta WhatsApp webhook payload.')
@@ -949,8 +1020,8 @@ def whatsapp_webhook():
     except MetaWhatsAppConfigurationError as error:
         app.logger.error('Meta WhatsApp API configuration error: %s', error)
         return jsonify({'status': 'error', 'message': 'WhatsApp messaging is not configured.'}), 503
-    except requests.RequestException:
-        app.logger.exception('Meta WhatsApp API message dispatch failed.')
+    except requests.RequestException as error:
+        log_meta_whatsapp_request_error(error)
         return jsonify({'status': 'error', 'message': 'WhatsApp message delivery failed.'}), 502
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
         app.logger.exception('WhatsApp webhook database operation failed.')
