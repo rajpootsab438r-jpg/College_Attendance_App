@@ -566,7 +566,7 @@ def dispatch_meta_whatsapp_message(recipient, message):
 
 
 @app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
-def whatsapp_bot_webhook():
+def whatsapp_webhook():
     if request.method == 'GET':
         mode = request.args.get('hub.mode', '')
         challenge = request.args.get('hub.challenge', '')
