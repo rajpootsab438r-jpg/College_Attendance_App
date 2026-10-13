@@ -490,14 +490,8 @@ def extract_meta_whatsapp_messages(payload):
                     list_id = (
                         list_reply.get('id') if isinstance(list_reply, dict) else None
                     )
-                has_text_message = message_type == 'text' and isinstance(text, str)
                 if (
-                    isinstance(sender, str) and sender.strip() and
-                    (
-                        has_text_message or
-                        (isinstance(button_id, str) and button_id.strip()) or
-                        (isinstance(list_id, str) and list_id.strip())
-                    )
+                    isinstance(sender, str) and sender.strip()
                 ):
                     parsed_messages.append((
                         sender.strip(),
@@ -897,8 +891,8 @@ def whatsapp_webhook():
         if not isinstance(payload, dict):
             return '', 200
         messages = extract_meta_whatsapp_messages(payload)
-    except (AttributeError, IndexError, TypeError, KeyError):
-        app.logger.warning('Ignoring malformed Meta WhatsApp webhook payload.')
+    except Exception:
+        app.logger.exception('Could not parse the incoming Meta WhatsApp webhook payload.')
         return '', 200
     if not messages:
         # Meta also sends status-only webhook events; acknowledge without replying.
