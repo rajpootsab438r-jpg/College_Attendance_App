@@ -6,17 +6,17 @@ import hmac
 import html
 import re
 import secrets
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
+import google.generativeai as genai
 import psycopg2
 from psycopg2.extras import DictCursor
-import requests
 from datetime import date, datetime, timedelta, timezone
 import io
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 
 class SQLiteCursorProxy:
@@ -380,542 +380,18 @@ def get_db_connection():
     return conn
 
 
-WHATSAPP_CLASS_ALIASES = {
-    'fa it': 'FA IT',
-    'fa': 'FA',
-    'fsc pre medical': 'FSc Pre-Medical',
-    'fsc pre engineering': 'FSc Pre-Engineering',
-    'fsc': 'FSc',
-    'ics': 'ICS',
-    'i com': 'I.Com',
-    'icom': 'I.Com',
-    'general science': 'General Science',
-    'bs cs': 'BS-CS',
-    'bs it': 'BS-IT',
-    'bs commerce': 'BS Commerce',
-    'bs english': 'BS English',
-    'bs chemistry': 'BS Chemistry',
-    'bs physics': 'BS Physics',
-    'bs mathematics': 'BS Mathematics',
-    'bs zoology': 'BS Zoology',
-    'bs botany': 'BS Botany',
-    'bs psychology': 'BS Psychology',
-    'bba': 'BBA',
-    'dit': 'DIT',
-    'd com': 'D.Com',
-    'dcom': 'D.Com'
-}
-_WHATSAPP_CLASS_PATTERN = (
-    r'fa[\s-]*it|fsc[\s-]*pre[\s-]*medical|fsc[\s-]*pre[\s-]*engineering|general[\s-]*science|'
-    r'bs\s*[- ]?\s*(?:cs|it|commerce|english|chemistry|physics|mathematics|zoology|botany|psychology)|'
-    r'i\.?\s*com|d\.?\s*com|fa|fsc|ics|bba|dit'
-)
-WHATSAPP_CONTEXT_PATTERN = re.compile(
-    rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
-    r'(?:(?P<part_type>part|semester|sem)\s*[- ]*|[- ]*)'
-    r'(?P<part>\d+)\s+(?:roll\s*(?:no\.?\s*)?)?'
-    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b'
-)
-WHATSAPP_ROLL_ONLY_PATTERN = re.compile(
-    rf'(?P<class>{_WHATSAPP_CLASS_PATTERN})\s*'
-    r'(?:(?:part|semester|sem)\s*)?'
-    r'(?:roll\s*(?:no\.?\s*)?)?'
-    r'(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b'
-)
-WHATSAPP_ROLL_NUMBER_PATTERN = re.compile(
-    r'\broll\s*(?:no\.?\s*)?(?P<roll>\d+)\s*(?P<intent>report|attendance|status)?\b',
-    re.IGNORECASE
-)
-WHATSAPP_INTENT_PATTERN = re.compile(r'\b(report|attendance|status)\b', re.IGNORECASE)
-WHATSAPP_UNVERIFIED_REPLY = (
-    "We could not verify your records. Please reply with your child's credentials in this exact "
-    "format to fetch logs: [Class Name] [Part] [Roll Number] Report "
-    "(Example: FAIT Part-2 15 Report), or contact Administration at "
-    "Support/WhatsApp: 03426600749."
-)
-META_VERIFY_TOKEN_DEFAULT = 'CAS_Secret_Token_2026'
-
-
-class MetaWhatsAppConfigurationError(RuntimeError):
-    pass
-
-
-def extract_meta_whatsapp_messages(payload):
-    if not isinstance(payload, dict):
-        return []
-
-    parsed_messages = []
-    entries = payload.get('entry')
-    if not isinstance(entries, list):
-        return parsed_messages
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        changes = entry.get('changes')
-        if not isinstance(changes, list):
-            continue
-        for change in changes:
-            if not isinstance(change, dict):
-                continue
-            value = change.get('value')
-            if not isinstance(value, dict):
-                continue
-            messages = value.get('messages')
-            if not isinstance(messages, list):
-                continue
-            for message in messages:
-                if not isinstance(message, dict):
-                    continue
-                sender = message.get('from')
-                message_type = message.get('type')
-                text = None
-                button_id = None
-                list_id = None
-                if message_type == 'text':
-                    text_payload = message.get('text')
-                    text = text_payload.get('body') if isinstance(text_payload, dict) else None
-                elif message_type == 'interactive':
-                    interactive = message.get('interactive')
-                    button_reply = (
-                        interactive.get('button_reply')
-                        if isinstance(interactive, dict) else None
-                    )
-                    button_id = (
-                        button_reply.get('id') if isinstance(button_reply, dict) else None
-                    )
-                    list_reply = (
-                        interactive.get('list_reply')
-                        if isinstance(interactive, dict) else None
-                    )
-                    list_id = (
-                        list_reply.get('id') if isinstance(list_reply, dict) else None
-                    )
-                if (
-                    isinstance(sender, str) and sender.strip()
-                ):
-                    parsed_messages.append((
-                        sender.strip(),
-                        text.strip() if isinstance(text, str) else '',
-                        button_id.strip() if isinstance(button_id, str) else None,
-                        list_id.strip() if isinstance(list_id, str) else None
-                    ))
-    return parsed_messages
-
-
-def log_meta_whatsapp_status_updates(payload):
-    for entry in payload.get('entry', []):
-        if not isinstance(entry, dict):
-            continue
-        for change in entry.get('changes', []):
-            if not isinstance(change, dict):
-                continue
-            value = change.get('value')
-            if not isinstance(value, dict):
-                continue
-            statuses = value.get('statuses', [])
-            if not isinstance(statuses, list):
-                continue
-            for status in statuses:
-                if not isinstance(status, dict):
-                    continue
-                status_name = status.get('status', 'unknown')
-                message_id = status.get('id', 'unknown')
-                if status_name == 'failed':
-                    errors = status.get('errors', [])
-                    for error in errors:
-                        if not isinstance(error, dict):
-                            continue
-                        app.logger.error(
-                            'Meta WhatsApp delivery failed: message_id=%s code=%s '
-                            'subcode=%s title=%s detail=%s',
-                            message_id,
-                            error.get('code'),
-                            error.get('error_subcode'),
-                            error.get('title'),
-                            error.get('message')
-                        )
-                else:
-                    app.logger.info(
-                        'Meta WhatsApp delivery status: message_id=%s status=%s',
-                        message_id,
-                        status_name
-                    )
-
-
-def log_meta_whatsapp_request_error(error):
-    response = error.response
-    if response is None:
-        app.logger.error(
-            'Meta WhatsApp request failed before receiving an HTTP response: %s',
-            error
-        )
-        return
-    try:
-        response_payload = response.json()
-    except ValueError:
-        response_payload = {}
-    meta_error = (
-        response_payload.get('error')
-        if isinstance(response_payload, dict) else None
-    )
-    if not isinstance(meta_error, dict):
-        meta_error = {}
-    app.logger.error(
-        'Meta WhatsApp API rejected outbound message: HTTP %s code=%s subcode=%s '
-        'type=%s fbtrace_id=%s message=%s',
-        response.status_code,
-        meta_error.get('code'),
-        meta_error.get('error_subcode'),
-        meta_error.get('type'),
-        meta_error.get('fbtrace_id'),
-        meta_error.get('message')
-    )
-
-
-def parse_whatsapp_context(message):
-    text_clean = message.lower().strip()
-    match = WHATSAPP_CONTEXT_PATTERN.search(text_clean)
-    part = match.group('part') if match else None
-    part_type = match.group('part_type') if match else None
-    if not match:
-        match = WHATSAPP_ROLL_ONLY_PATTERN.search(text_clean)
-    if not match:
+def normalize_meta_recipient(phone):
+    digits = re.sub(r'\D', '', phone or '')
+    if digits.startswith('00'):
+        digits = digits[2:]
+    elif digits.startswith('0'):
+        country_code = os.environ.get('WHATSAPP_DEFAULT_COUNTRY_CODE', '92').strip()
+        if not re.fullmatch(r'\d{1,3}', country_code):
+            raise ValueError('WHATSAPP_DEFAULT_COUNTRY_CODE must contain 1–3 digits.')
+        digits = country_code + digits[1:]
+    if not 8 <= len(digits) <= 15 or digits.startswith('0'):
         return None
-    class_text = re.sub(r'\s+', ' ', match.group('class').replace('.', ' ')).strip()
-    normalized_class = re.sub(r'[^a-z0-9]', '', class_text)
-    program = next(
-        (
-            canonical for alias, canonical in WHATSAPP_CLASS_ALIASES.items()
-            if re.sub(r'[^a-z0-9]', '', alias) == normalized_class
-        ),
-        None
-    )
-    if program is None:
-        return None
-    return {
-        'program': program,
-        'part': part,
-        'part_type': 'part' if part_type in (None, 'part') else 'semester',
-        'roll': str(int(match.group('roll'))),
-        'intent': (match.group('intent') or 'status').lower()
-    }
-
-
-def parse_whatsapp_roll_context(message):
-    match = WHATSAPP_ROLL_NUMBER_PATTERN.search(message.lower().strip())
-    if not match:
-        return None
-    return {
-        'roll': str(int(match.group('roll'))),
-        'intent': (match.group('intent') or 'status').lower()
-    }
-
-
-def normalized_whatsapp_part(part):
-    return re.sub(r'[^a-z0-9]', '', str(part).lower())
-
-
-def normalized_whatsapp_phone(phone):
-    digits = re.sub(r'\D', '', phone)
-    return digits[2:] if digits.startswith('00') else digits
-
-
-def find_whatsapp_student(cursor, sender, context):
-    student_columns = 'id, roll_no, student_name, phone_number, program, part, college_id'
-    if context and context.get('program'):
-        normalized_program = re.sub(r'[^a-z0-9]', '', context['program'].lower())
-        cursor.execute(
-            'SELECT ' + student_columns + ' FROM students '
-            "WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(program), '-', ''), ' ', ''), '.', '')) = %s "
-            'AND roll_no = %s',
-            (normalized_program, context['roll'])
-        )
-        students = cursor.fetchall()
-        if context['part'] is not None:
-            expected_part = normalized_whatsapp_part(
-                context['part_type'] + context['part']
-            )
-            students = [
-                student for student in students
-                if normalized_whatsapp_part(student['part']) == expected_part
-            ]
-        return students[0] if len(students) == 1 else None
-
-    normalized_sender = normalized_whatsapp_phone(sender)
-    if not normalized_sender:
-        return None
-    if context and context.get('roll'):
-        cursor.execute(
-            'SELECT ' + student_columns + ' FROM students '
-            'WHERE roll_no = %s AND phone_number IS NOT NULL',
-            (context['roll'],)
-        )
-    else:
-        cursor.execute(
-            'SELECT ' + student_columns + ' FROM students WHERE phone_number IS NOT NULL'
-        )
-    students = []
-    for student in cursor.fetchall():
-        stored_phone = normalized_whatsapp_phone(student['phone_number'] or '')
-        phone_matches = stored_phone == normalized_sender or (
-            len(stored_phone) >= 10 and len(normalized_sender) >= 10 and
-            stored_phone[-10:] == normalized_sender[-10:]
-        )
-        if phone_matches:
-            students.append(student)
-    return students[0] if len(students) == 1 else None
-
-
-def whatsapp_attendance_reply(cursor, student, intent):
-    student_class = f"{student['program']} {student['part']}"
-    student_label = (
-        f"Student {student['student_name']} (Roll No: {student['roll_no']}, "
-        f"Class: {student_class})"
-    )
-    if intent in {'report', 'attendance'}:
-        today = date.today()
-        cursor.execute(
-            'SELECT attendance_date, period_no FROM attendance '
-            'WHERE student_roll = %s AND college_id = %s '
-            'AND attendance_date >= %s AND attendance_date <= %s '
-            'AND LOWER(status) IN (%s, %s) '
-            'ORDER BY attendance_date ASC, period_no ASC',
-            (
-                student['roll_no'], student['college_id'],
-                (today - timedelta(days=30)).isoformat(), today.isoformat(),
-                'absent', 'leave'
-            )
-        )
-        records = cursor.fetchall()
-        dates = ', '.join(
-            f"{record['attendance_date']} (Period {record['period_no']})"
-            for record in records
-        ) or 'None'
-        return (
-            f"Assalamu Alaikum! {student_label} was absent or on leave on these specific "
-            f"dates over the past 30 days: {dates}. CAS System Management."
-        )
-
-    cursor.execute(
-        'SELECT period_no, status FROM attendance '
-        'WHERE student_roll = %s AND college_id = %s AND attendance_date = %s '
-        'ORDER BY period_no ASC',
-        (student['roll_no'], student['college_id'], date.today().isoformat())
-    )
-    records = cursor.fetchall()
-    if not records:
-        attendance_summary = "no attendance has been recorded for today's active periods"
-    else:
-        period_summary = ', '.join(
-            f"Period {record['period_no']}: {record['status']}" for record in records
-        )
-        attendance_summary = f"today's active periods are recorded as follows: {period_summary}"
-    return f"Assalamu Alaikum! {student_label} — {attendance_summary}. CAS System Management."
-
-
-def get_meta_whatsapp_configuration():
-    access_token = os.environ.get('META_ACCESS_TOKEN', '').strip()
-    phone_number_id = os.environ.get('META_PHONE_NUMBER_ID', '').strip()
-    api_version = os.environ.get('META_GRAPH_API_VERSION', '').strip()
-    if not access_token or not phone_number_id or not api_version:
-        raise MetaWhatsAppConfigurationError(
-            'META_ACCESS_TOKEN, META_PHONE_NUMBER_ID, and META_GRAPH_API_VERSION must be configured.'
-        )
-    if not re.fullmatch(r'\d+', phone_number_id):
-        raise MetaWhatsAppConfigurationError('META_PHONE_NUMBER_ID must contain only digits.')
-    if not re.fullmatch(r'v\d+\.\d+', api_version):
-        raise MetaWhatsAppConfigurationError('META_GRAPH_API_VERSION must use the format vNN.N.')
-    return access_token, phone_number_id, api_version
-
-
-def dispatch_meta_whatsapp_message(recipient, message):
-    access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
-    response = requests.post(
-        f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
-        headers={
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        },
-        json={
-            'messaging_product': 'whatsapp',
-            'to': recipient,
-            'type': 'text',
-            'text': {'body': message}
-        },
-        timeout=(3.05, 10)
-    )
-    response.raise_for_status()
-
-
-def dispatch_meta_whatsapp_menu(recipient):
-    access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
-    response = requests.post(
-        f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
-        headers={
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        },
-        json={
-            'messaging_product': 'whatsapp',
-            'recipient_type': 'individual',
-            'to': recipient,
-            'type': 'interactive',
-            'interactive': {
-                'type': 'button',
-                'body': {
-                    'text': (
-                        'Assalamu Alaikum! CAS Portal Intelligent AI Assistant mein '
-                        'khush-amdeed. Apne bache ki report nikalne ke liye niche diye gaye '
-                        'academic programs mein se kisi aik ka chunao karein:'
-                    )
-                },
-                'action': {
-                    'buttons': [
-                        {
-                            'type': 'reply',
-                            'reply': {'id': 'stream_inter', 'title': '🏫 Inter Programs (11th/12th)'}
-                        },
-                        {
-                            'type': 'reply',
-                            'reply': {'id': 'stream_bs', 'title': '🎓 BS Degrees & Diplomas'}
-                        }
-                    ]
-                }
-            }
-        },
-        timeout=(3.05, 10)
-    )
-    response.raise_for_status()
-
-
-def dispatch_meta_plain_text_menu(recipient):
-    dispatch_meta_whatsapp_message(
-        recipient,
-        'Assalamu Alaikum! CAS Portal Intelligent AI Assistant mein khush-amdeed.\n\n'
-        'Apni academic program stream select karne ke liye ginti ka number '
-        '(1 ya 2) reply mein bheinjein:\n'
-        '1. 🏫 Intermediate Programs\n'
-        '2. 🎓 BS Degrees & Diplomas'
-    )
-
-
-def dispatch_meta_whatsapp_list(recipient, header, body, rows):
-    access_token, phone_number_id, api_version = get_meta_whatsapp_configuration()
-    response = requests.post(
-        f'https://graph.facebook.com/{api_version}/{phone_number_id}/messages',
-        headers={
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        },
-        json={
-            'messaging_product': 'whatsapp',
-            'recipient_type': 'individual',
-            'to': recipient,
-            'type': 'interactive',
-            'interactive': {
-                'type': 'list',
-                'header': {'type': 'text', 'text': header},
-                'body': {'text': body},
-                'action': {
-                    'button': 'Choose Program',
-                    'sections': [{
-                        'title': 'Academic Programs',
-                        'rows': [
-                            {'id': row_id, 'title': title}
-                            for row_id, title in rows
-                        ]
-                    }]
-                }
-            }
-        },
-        timeout=(3.05, 10)
-    )
-    response.raise_for_status()
-
-
-WHATSAPP_STREAM_BUTTONS = {
-    'stream_inter': 'intermediate',
-    'stream_bs': 'bs'
-}
-WHATSAPP_PROGRAM_ROWS = {
-    'intermediate': [
-        ('cls_fa', 'FA (Arts)'),
-        ('cls_fait', 'FA IT (Arts in IT)'),
-        ('cls_fscmed', 'FSc Pre-Medical'),
-        ('cls_fsceng', 'FSc Pre-Engineering'),
-        ('cls_ics', 'ICS (Computer Science)'),
-        ('cls_icom', 'I.Com (Commerce)'),
-        ('cls_gensci', 'General Science')
-    ],
-    'bs': [
-        ('cls_bscs', 'BS-CS'),
-        ('cls_bsit', 'BS-IT'),
-        ('cls_bscomm', 'BS Commerce'),
-        ('cls_bseng', 'BS English'),
-        ('cls_bschem', 'BS Chemistry'),
-        ('cls_bsphy', 'BS Physics'),
-        ('cls_bsmath', 'BS Mathematics'),
-        ('cls_bszoo', 'BS Zoology'),
-        ('cls_bsbot', 'BS Botany'),
-        ('cls_bspsy', 'BS Psychology'),
-        ('cls_bba', 'BBA'),
-        ('cls_dit', 'DIT Diploma'),
-        ('cls_dcom', 'D.Com Diploma')
-    ]
-}
-WHATSAPP_CLASS_SELECTION_IDS = {
-    row_id for rows in WHATSAPP_PROGRAM_ROWS.values() for row_id, _ in rows
-}
-WHATSAPP_PROGRAM_SELECTION_REPLY = (
-    'Shukriya! Aap ne program selection mehfooz kar li hai. Ab bache ka roll number '
-    'nikalne ke liye is exact format mein reply bheinjein: Roll No [X] (Example: Roll No 15)'
-)
-WHATSAPP_LIST_TRIGGER_PATTERN = re.compile(r'^(?:1|2)$')
-
-
-def dispatch_meta_program_list(recipient, stream):
-    if stream == 'intermediate':
-        dispatch_meta_whatsapp_list(
-            recipient,
-            'Intermediate Academic Streams',
-            'Niche diye gaye pop-up dropdown menu se bache ki sahi class select karein:',
-            WHATSAPP_PROGRAM_ROWS['intermediate']
-        )
-        return
-
-    rows = WHATSAPP_PROGRAM_ROWS['bs']
-    dispatch_meta_whatsapp_list(
-        recipient,
-        'BS Programs & Vocational Diplomas',
-        'Niche diye gaye pop-up dropdown menu se bache ki sahi degree stream select karein:',
-        rows[:10]
-    )
-    dispatch_meta_whatsapp_list(
-        recipient,
-        'More BS Programs & Diplomas',
-        'Mazeed BS programs aur vocational diplomas yahan se select karein:',
-        rows[10:]
-    )
-
-
-WHATSAPP_BUTTON_REPLIES = {
-    'btn_status': (
-        "Shukriya! Apne bache ka live status jan'ne ke liye, apna Class aur Roll Number "
-        'is exact format mein bheinjein: FAIT 301'
-    ),
-    'btn_report': (
-        'Shukriya! Purani absent dates nikalne ke liye, apni credentials is format mein '
-        'bheinjein: FAIT 301 Report'
-    ),
-    'btn_admin': (
-        'Management Portal Helplines: 03426600749. Kisi bhi masle ki surat mein is number '
-        'par direct rabta karein.'
-    )
-}
-WHATSAPP_MENU_TRIGGER_PATTERN = re.compile(
-    r'\b(?:hi|hello|assalamu\s+alaikum|aaoa|menu|bot)\b',
-    re.IGNORECASE
-)
+    return digits
 
 
 def academic_program_options(cursor):
@@ -935,100 +411,138 @@ def academic_program_options(cursor):
     ]
 
 
-def normalize_meta_recipient(phone):
-    digits = re.sub(r'\D', '', phone or '')
-    if digits.startswith('00'):
-        digits = digits[2:]
-    elif digits.startswith('0'):
-        country_code = os.environ.get('WHATSAPP_DEFAULT_COUNTRY_CODE', '92').strip()
-        if not re.fullmatch(r'\d{1,3}', country_code):
-            raise ValueError('WHATSAPP_DEFAULT_COUNTRY_CODE must contain 1–3 digits.')
-        digits = country_code + digits[1:]
-    if not 8 <= len(digits) <= 15 or digits.startswith('0'):
-        return None
-    return digits
+@app.route('/api/native_chat', methods=['POST'])
+def native_chat():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'status': 'error', 'message': 'Send a valid chat message.'}), 400
+    message = payload.get('message')
+    if not isinstance(message, str) or not message.strip():
+        return jsonify({'status': 'error', 'message': 'Enter a message to continue.'}), 400
+    message = message.strip()
+    if len(message) > 2000:
+        return jsonify({'status': 'error', 'message': 'Messages must be 2,000 characters or fewer.'}), 400
 
-
-@app.route('/api/whatsapp_bot_webhook', methods=['GET', 'POST'])
-def whatsapp_webhook():
-    if request.method == 'GET':
-        challenge = request.args.get('hub.challenge', '')
-        return str(challenge), 200
+    api_key = os.environ.get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return jsonify({'status': 'error', 'message': 'The AI assistant is not configured yet.'}), 503
 
     try:
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return '', 200
-        log_meta_whatsapp_status_updates(payload)
-        messages = extract_meta_whatsapp_messages(payload)
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            'gemini-1.5-flash',
+            system_instruction=(
+                'You are the polite CAS College Attendance System parent assistant. Understand '
+                'English and Roman Urdu. Classify requests for a particular student\'s attendance '
+                'records as student_record. Extract the class/program name (without its part or '
+                'semester) and roll number when present. Never invent student or attendance data. '
+                'Return only a JSON object with string fields intent (student_record or general), '
+                'class_name, roll_number, and reply. For missing identifiers, leave the relevant '
+                'field empty and politely ask for the class name and roll number in the reply. '
+                'For other questions, give a concise, polite reply.'
+            )
+        )
+        completion = model.generate_content(
+            message,
+            generation_config={'response_mime_type': 'application/json'}
+        )
+        parsed = json.loads(completion.text)
+        if not isinstance(parsed, dict):
+            raise ValueError('Gemini returned an invalid response shape.')
+    except (ValueError, json.JSONDecodeError):
+        app.logger.exception('Gemini returned an invalid native chat response.')
+        return jsonify({'status': 'error', 'message': 'The assistant could not read that request. Please try again.'}), 502
     except Exception:
-        app.logger.exception('Could not parse the incoming Meta WhatsApp webhook payload.')
-        return '', 200
-    if not messages:
-        # Meta also sends status-only webhook events; acknowledge without replying.
-        return '', 200
+        app.logger.exception('Gemini native chat request failed.')
+        return jsonify({'status': 'error', 'message': 'The assistant is temporarily unavailable.'}), 502
 
+    intent = parsed.get('intent')
+    reply = parsed.get('reply')
+    if not isinstance(reply, str) or not reply.strip():
+        reply = 'Please share your question, including your child\'s class and roll number for an attendance report.'
+    if intent != 'student_record':
+        return jsonify({'status': 'success', 'reply': reply[:1200]})
+
+    class_name = parsed.get('class_name')
+    roll_number = parsed.get('roll_number')
+    if not isinstance(class_name, str) or not class_name.strip() or not isinstance(roll_number, str) or not roll_number.strip():
+        return jsonify({'status': 'success', 'reply': reply[:1200]})
+
+    normalized_class = re.sub(r'[^a-z0-9]', '', class_name.casefold())
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT roll_no, program, part, college_id FROM students '
+            "WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(program), '-', ''), ' ', ''), '.', '')) = %s "
+            'AND LOWER(TRIM(roll_no)) = LOWER(%s)',
+            (normalized_class, roll_number.strip())
+        )
+        students = cursor.fetchall()
+        if not students:
+            return jsonify({
+                'status': 'success',
+                'reply': 'Sorry, I could not find a student record for that class and roll number. Please check the details and try again.'
+            })
+        if len(students) > 1:
+            return jsonify({
+                'status': 'success',
+                'reply': 'I found more than one matching record. Please contact your college administration to confirm the correct class and roll number.'
+            })
+        student = students[0]
+        cursor.execute(
+            'SELECT COUNT(*) AS total_records, '
+            "SUM(CASE WHEN LOWER(TRIM(status)) = 'present' THEN 1 ELSE 0 END) AS present_records "
+            'FROM attendance WHERE LOWER(TRIM(student_roll)) = LOWER(%s) AND college_id = %s '
+            "AND LOWER(TRIM(status)) IN ('present', 'absent', 'leave')",
+            (student['roll_no'], student['college_id'])
+        )
+        attendance = cursor.fetchone()
+        total = int(attendance['total_records'] or 0)
+        present = int(attendance['present_records'] or 0)
+        percentage = round(present * 100 / total, 1) if total else 0.0
+        student_class = f"{student['program']} ({student['part']})"
+        report = (
+            f"Assalamu Alaikum! The attendance compliance for roll number "
+            f"{student['roll_no']} in {student_class} is {percentage}% "
+            f"({present} present out of {total} recorded periods)."
+            if total else
+            f"Assalamu Alaikum! I found roll number {student['roll_no']} in {student_class}, "
+            'but no attendance has been recorded yet.'
+        )
+        return jsonify({'status': 'success', 'reply': report})
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('Native chat student-record lookup failed.')
+        return jsonify({'status': 'error', 'message': 'Student attendance records are temporarily unavailable.'}), 503
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+
+@app.route('/api/global_notice', methods=['GET'])
+def latest_global_notice():
     conn = None
     try:
-        cursor = None
-        for sender, text, button_id, list_id in messages:
-            text_clean = text.lower().strip()
-            if button_id in WHATSAPP_BUTTON_REPLIES:
-                dispatch_meta_whatsapp_message(sender, WHATSAPP_BUTTON_REPLIES[button_id])
-                continue
-            if button_id in WHATSAPP_STREAM_BUTTONS:
-                dispatch_meta_program_list(sender, WHATSAPP_STREAM_BUTTONS[button_id])
-                continue
-            if WHATSAPP_LIST_TRIGGER_PATTERN.fullmatch(text_clean):
-                stream = 'intermediate' if text_clean == '1' else 'bs'
-                dispatch_meta_program_list(sender, stream)
-                continue
-            if WHATSAPP_MENU_TRIGGER_PATTERN.search(text_clean):
-                dispatch_meta_plain_text_menu(sender)
-                continue
-            if list_id in WHATSAPP_CLASS_SELECTION_IDS:
-                dispatch_meta_whatsapp_message(
-                    sender, WHATSAPP_PROGRAM_SELECTION_REPLY
-                )
-                continue
-            if list_id:
-                dispatch_meta_plain_text_menu(sender)
-                continue
-
-            context = parse_whatsapp_context(text_clean)
-            if context is None:
-                context = parse_whatsapp_roll_context(text_clean)
-            if context is None:
-                dispatch_meta_plain_text_menu(sender)
-                continue
-            intent = context['intent'] if context else None
-            if conn is None:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-            student = find_whatsapp_student(cursor, sender, context)
-            if not student:
-                reply = WHATSAPP_UNVERIFIED_REPLY
-            elif not intent:
-                reply = (
-                    "Please request Report, Attendance, or Status. You can include class, part, "
-                    "and roll number, for example: FAIT Part-2 15 Report."
-                )
-            else:
-                reply = whatsapp_attendance_reply(cursor, student, intent)
-            dispatch_meta_whatsapp_message(sender, reply)
-        return jsonify({'status': 'received'}), 200
-    except MetaWhatsAppConfigurationError as error:
-        app.logger.error('Meta WhatsApp API configuration error: %s', error)
-        return jsonify({'status': 'error', 'message': 'WhatsApp messaging is not configured.'}), 503
-    except requests.RequestException as error:
-        log_meta_whatsapp_request_error(error)
-        return jsonify({'status': 'error', 'message': 'WhatsApp message delivery failed.'}), 502
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT message, image_path, created_at FROM global_notifications '
+            'ORDER BY created_at DESC, id DESC LIMIT 1'
+        )
+        notice = cursor.fetchone()
+        if not notice:
+            return jsonify({'status': 'success', 'notice': None})
+        return jsonify({
+            'status': 'success',
+            'notice': {
+                'message': notice['message'],
+                'image_path': notice['image_path'],
+                'created_at': str(notice['created_at'])
+            }
+        })
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
-        app.logger.exception('WhatsApp webhook database operation failed.')
-        return jsonify({'status': 'error', 'message': 'Attendance records are temporarily unavailable.'}), 503
-    except Exception:
-        app.logger.exception('Unexpected WhatsApp webhook processing failure.')
-        return jsonify({'status': 'error', 'message': 'WhatsApp message processing failed.'}), 500
+        app.logger.exception('Could not load the latest global announcement.')
+        return jsonify({'status': 'error', 'message': 'Global announcements are temporarily unavailable.'}), 503
     finally:
         if conn is not None:
             conn.close()
@@ -1046,75 +560,67 @@ def admin_broadcast_message():
         return jsonify({'status': 'error', 'message': 'The security token is invalid. Reload the page and try again.'}), 403
 
     message = request.form.get('announcement', '')
-    if not isinstance(message, str) or not message.strip():
-        return jsonify({'status': 'error', 'message': 'Enter an announcement before sending.'}), 400
+    if not message.strip():
+        return jsonify({'status': 'error', 'message': 'Enter an announcement before publishing.'}), 400
     message = message.strip()
     if len(message) > 4096:
         return jsonify({'status': 'error', 'message': 'Announcements must be 4,096 characters or fewer.'}), 400
-    try:
-        get_meta_whatsapp_configuration()
-    except MetaWhatsAppConfigurationError as error:
-        app.logger.error('Meta WhatsApp API configuration error for admin broadcast: %s', error)
-        return jsonify({'status': 'error', 'message': 'WhatsApp messaging is not configured.'}), 503
+
+    image_file = request.files.get('broadcast_image')
+    image_path = None
+    saved_image_path = None
+    if image_file and image_file.filename:
+        allowed_images = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+            '.gif': 'image/gif', '.webp': 'image/webp'
+        }
+        extension = os.path.splitext(secure_filename(image_file.filename))[1].lower()
+        if extension not in allowed_images or image_file.mimetype != allowed_images[extension]:
+            return jsonify({'status': 'error', 'message': 'Choose a supported JPG, PNG, GIF, or WebP image.'}), 400
+        image_data = image_file.stream.read(5 * 1024 * 1024 + 1)
+        if len(image_data) > 5 * 1024 * 1024:
+            return jsonify({'status': 'error', 'message': 'Broadcast images must be 5 MB or smaller.'}), 413
+        image_signatures = {
+            '.jpg': lambda data: data.startswith(b'\xff\xd8\xff'),
+            '.jpeg': lambda data: data.startswith(b'\xff\xd8\xff'),
+            '.png': lambda data: data.startswith(b'\x89PNG\r\n\x1a\n'),
+            '.gif': lambda data: data.startswith((b'GIF87a', b'GIF89a')),
+            '.webp': lambda data: len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP'
+        }
+        if not image_signatures[extension](image_data):
+            return jsonify({'status': 'error', 'message': 'The selected file is not a valid supported image.'}), 400
+        filename = f'{secrets.token_hex(16)}{extension}'
+        image_path = os.path.join('uploads', 'broadcasts', filename).replace(os.sep, '/')
+        saved_image_path = os.path.join(STATIC_DIR, *image_path.split('/'))
+        try:
+            os.makedirs(os.path.dirname(saved_image_path), exist_ok=True)
+            with open(saved_image_path, 'wb') as image_destination:
+                image_destination.write(image_data)
+        except OSError:
+            app.logger.exception('Could not save the uploaded global announcement image.')
+            return jsonify({'status': 'error', 'message': 'The announcement image could not be saved.'}), 500
 
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            'SELECT phone_number FROM students WHERE college_id = %s',
-            (session['user_id'],)
+            'INSERT INTO global_notifications (message, image_path) VALUES (%s, %s)',
+            (message, image_path)
         )
-        phone_numbers = cursor.fetchall()
+        conn.commit()
+        return jsonify({'status': 'success', 'message': 'Global announcement published.'})
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
-        app.logger.exception('Could not load parent recipients for the admin broadcast.')
-        return jsonify({'status': 'error', 'message': 'The parent directory is temporarily unavailable.'}), 503
+        app.logger.exception('Could not publish the global announcement.')
+        if saved_image_path and os.path.exists(saved_image_path):
+            try:
+                os.remove(saved_image_path)
+            except OSError:
+                app.logger.exception('Could not remove an image from a failed global announcement.')
+        return jsonify({'status': 'error', 'message': 'The global announcement could not be saved.'}), 503
     finally:
         if conn is not None:
             conn.close()
-
-    recipients = set()
-    skipped = 0
-    try:
-        for row in phone_numbers:
-            if not (row['phone_number'] or '').strip():
-                skipped += 1
-                continue
-            recipient = normalize_meta_recipient(row['phone_number'])
-            if recipient:
-                recipients.add(recipient)
-            else:
-                skipped += 1
-    except ValueError as error:
-        app.logger.error('Invalid WhatsApp country-code configuration for admin broadcast: %s', error)
-        return jsonify({'status': 'error', 'message': str(error)}), 500
-
-    def deliver_announcement(recipient):
-        try:
-            dispatch_meta_whatsapp_message(recipient, message)
-            return 'sent'
-        except requests.RequestException:
-            app.logger.exception('Meta WhatsApp broadcast delivery failed for a recipient.')
-            return 'failed'
-
-    delivered = 0
-    failed = 0
-    if recipients:
-        with ThreadPoolExecutor(max_workers=min(8, len(recipients))) as executor:
-            futures = [executor.submit(deliver_announcement, recipient) for recipient in recipients]
-            for future in as_completed(futures):
-                if future.result() == 'sent':
-                    delivered += 1
-                else:
-                    failed += 1
-    return jsonify({
-        'status': 'success',
-        'recipients': len(recipients),
-        'sent': delivered,
-        'failed': failed,
-        'skipped': skipped
-    })
-
 
 def validate_academic_class(cursor, program, part, section):
     normalized_program = re.sub(r'[^a-z0-9]', '', program.lower())
@@ -1165,79 +671,20 @@ def set_language(lang):
         session['lang'] = lang
     return redirect(request.referrer or url_for('welcome'))
 
-# 1. Welcome Portal (English Default with Global Multi-Language Corner Interface Switches)
+# 1. Welcome Portal
 @app.route('/')
 def welcome():
     current_lang = session.get('lang', 'en')
-    t = LANG_DICT[current_lang]
+    translations = LANG_DICT[current_lang]
     next_lang = 'ur' if current_lang == 'en' else 'en'
-    
-    return f"""
-    <html>
-        <head>
-            <title>{t['title']} | Çukur</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            <link rel="manifest" href="/manifest.json">
-            <style>
-                body {{ 
-                    font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 0;
-                    height: 100vh; display: flex; justify-content: center; align-items: center;
-                    background-color: #f4f6f9; direction: {'rtl' if current_lang == 'ur' else 'ltr'};
-                }}
-                .lang-switcher-bar {{
-                    position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; gap: 10px;
-                }}
-                .lang-btn, .catalog-btn {{
-                    background: #ffffff; color: #28a745; border: 1px solid #28a745;
-                    padding: 8px 16px; font-weight: bold; border-radius: 20px;
-                    text-decoration: none; font-size: 13px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-                    transition: 0.2s; display: inline-flex; align-items: center;
-                }}
-                .lang-btn:hover, .catalog-btn:hover {{
-                    background: #28a745; color: white;
-                }}
-                .catalog-btn {{ color: #198754; border-color: #198754; }}
-                .catalog-btn:hover {{ background: #198754; }}
-                .container {{ 
-                    background: #ffffff; padding: 40px; border-radius: 16px; 
-                    box-shadow: 0px 8px 30px rgba(0,0,0,0.15); width: 90%; max-width: 400px; z-index: 1;
-                    box-sizing: border-box;
-                }}
-                h1 {{ color: #2c3e50; font-size: 24px; margin-top: 0; margin-bottom: 5px; font-weight: 700; }}
-                p {{ color: #7f8c8d; font-size: 15px; margin-bottom: 25px; }}
-                .btn {{ display: block; padding: 14px; margin: 12px 0; font-size: 16px; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; transition: all 0.2s ease; text-align: center; }}
-                .btn-admin {{ background-color: #007bff; }}
-                .btn-admin:hover {{ background-color: #0056b3; }}
-                .btn-teacher {{ background-color: #28a745; }}
-                .btn-teacher:hover {{ background-color: #218838; }}
-                .btn-dev {{ background-color: #198754; }}
-                .btn-dev:hover {{ background-color: #146c43; }}
-            </style>
-        </head>
-        <body>
-            <div class="lang-switcher-bar">
-                <a href="/static/app-release-signed.apk" class="catalog-btn" download>{t['download_app']}</a>
-                <a href="/set_language/{next_lang}" class="lang-btn">{t['lang_toggle']}</a>
-            </div>
-            <div class="container">
-                <h1>{t['title']}</h1>
-                <p>{t['subtitle']}</p>
-                <a href="/login/admin" class="btn btn-admin">{t['admin_btn']}</a>
-                <a href="/login/teacher" class="btn btn-teacher">{t['teacher_btn']}</a>
-                <a href="/login/developer" class="btn btn-dev">{t['dev_btn']}</a>
-                <div style="margin-top: 15px; font-size: 13px; color: #555; font-weight: 500;"> {t['support']}: 03426600749</div>
-                <div style="margin-top: 10px; font-size: 14px; color: #28a745; font-weight: bold; font-family: Arial; letter-spacing: 0.5px;">Çukur</div>
-            </div>
-            <script>
-                if ('serviceWorker' in navigator) {{
-                    window.addEventListener('load', () => {{
-                        navigator.serviceWorker.register('/sw.js', {{ scope: '/' }}).catch(() => {{}});
-                    }});
-                }}
-            </script>
-        </body>
-    </html>
-    """
+    return render_template(
+        'welcome.html',
+        current_lang=current_lang,
+        translations=translations,
+        next_lang=next_lang
+    )
+
+
 # 2. Secure Login Panel Gateway
 @app.route('/login/<role>', methods=['GET', 'POST'])
 def login(role):
@@ -1365,11 +812,6 @@ def admin_dashboard():
     college_name = session.get('college_name')
     current_admin_name = session.get('admin_name', college_name)
     current_lang = session.get('lang', 'en')
-    whatsapp_configured = bool(
-        os.environ.get('META_ACCESS_TOKEN', '').strip()
-        and os.environ.get('META_PHONE_NUMBER_ID', '').strip()
-    )
-    
     selected_program = request.args.get('program', '')
     selected_part = request.args.get('part', '')
     
@@ -1620,7 +1062,6 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_admin_name=current_admin_name, current_lang=current_lang,
-                           whatsapp_configured=whatsapp_configured,
                            academic_programs=academic_programs, academic_parts=academic_parts,
                            academic_sections=academic_sections, csrf_token=csrf_token,
                            edit_teacher=edit_teacher_data, edit_student=edit_student_data)

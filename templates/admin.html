@@ -323,20 +323,20 @@
 
 <div class="grid" style="margin-bottom:20px;">
     <section class="card full-width">
-        <h3>🚨 Mass Broadcast WhatsApp Notification Center</h3>
-        <p id="whatsapp-configuration-status" role="status">
-            {% if whatsapp_configured %}
-                ✅ WhatsApp Messaging is Configured &amp; Active
-            {% endif %}
-        </p>
-        <form id="admin-broadcast-form" action="/admin/broadcast_message" method="POST" data-no-offline-queue="true">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label for="broadcast-announcement">Announcement for parents (up to 4,096 characters)</label>
-            <textarea id="broadcast-announcement" name="announcement" rows="5" maxlength="4096"
-                style="width:100%;box-sizing:border-box;padding:12px;" required></textarea>
-            <button type="submit" id="broadcast-submit">📢 Dispatch Announcement to All Parents</button>
-            <p id="broadcast-status" role="status" aria-live="polite"></p>
-        </form>
+        <h3>🌐 Global Parent Notifications</h3>
+        <button type="button" id="admin-broadcast-toggle" class="form-toggle" aria-expanded="false" aria-controls="admin-broadcast-panel" data-form-toggle data-open-label="📢 Send Mass Broadcast Message" data-close-label="✕ Close Broadcast Settings">📢 Send Mass Broadcast Message</button>
+        <div id="admin-broadcast-panel" class="form-panel" hidden>
+            <form id="admin-broadcast-form" action="/admin/broadcast_message" method="POST" enctype="multipart/form-data" data-no-offline-queue="true">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label for="broadcast-announcement">Announcement for parents (up to 4,096 characters)</label>
+                <textarea id="broadcast-announcement" name="announcement" rows="5" maxlength="4096"
+                    style="width:100%;box-sizing:border-box;padding:12px;" required></textarea>
+                <label for="broadcast-image">Optional announcement image (JPG, PNG, GIF, or WebP; up to 5 MB)</label>
+                <input id="broadcast-image" type="file" name="broadcast_image" accept="image/*">
+                <button type="submit" id="broadcast-submit">Publish Global Announcement</button>
+                <p id="broadcast-status" role="status" aria-live="polite"></p>
+            </form>
+        </div>
         <a class="btn-success" href="/admin/master_erp_report" style="display:inline-block;margin-top:8px;text-decoration:none;padding:10px 16px;">
             📊 Download Master College ERP Report
         </a>
@@ -892,9 +892,9 @@
 
     form.addEventListener('submit', async function(event) {
       event.preventDefault();
-      if (!window.confirm('Send this announcement to every parent contact for this college?')) return;
+      if (!window.confirm('Publish this announcement for all parents on the Welcome Portal?')) return;
       button.disabled = true;
-      status.textContent = 'Sending announcement to parent contacts...';
+      status.textContent = 'Publishing global announcement...';
       try {
         const response = await fetch(form.action, {
           method: 'POST',
@@ -904,9 +904,9 @@
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.message || `Broadcast failed (HTTP ${response.status}).`);
-        status.textContent =
-          `Broadcast finished: ${result.sent} sent, ${result.failed} failed, ${result.skipped} invalid or missing phone numbers.`;
+        status.textContent = result.message || 'Global announcement published.';
         form.elements.announcement.value = '';
+        form.elements.broadcast_image.value = '';
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : 'Broadcast failed.';
       } finally {

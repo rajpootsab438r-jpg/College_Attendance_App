@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html {% if current_lang == 'ur' %}dir="rtl" lang="ur"{% else %}dir="ltr" lang="en"{% endif %}>
+<head>
+    <title>{{ translations.title }} | Çukur</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#198754">
+    <style>
+        :root { color-scheme: light; --page-bg: #f4f6f9; --surface: #fff; --text: #263445; --muted: #64748b; }
+        * { box-sizing: border-box; }
+        body { min-height: 100vh; margin: 0; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--page-bg); color: var(--text); font-family: 'Segoe UI', Arial, sans-serif; }
+        .lang-switcher-bar { position: absolute; top: 18px; inset-inline-end: 20px; z-index: 2; display: flex; gap: 10px; }
+        .lang-btn, .catalog-btn { display: inline-flex; align-items: center; border: 1px solid #198754; border-radius: 20px; padding: 8px 14px; background: var(--surface); color: #198754; font-size: 13px; font-weight: 700; text-decoration: none; box-shadow: 0 4px 12px #0f172a12; }
+        .lang-btn:hover, .catalog-btn:hover { background: #198754; color: #fff; }
+        .portal-main { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+        .container { width: min(100%, 420px); padding: 38px; border-radius: 18px; background: var(--surface); box-shadow: 0 12px 36px #0f172a1c; text-align: center; }
+        h1 { margin: 0 0 8px; color: #243447; font-size: 25px; }
+        .subtitle { margin: 0 0 24px; color: var(--muted); }
+        .portal-link { display: block; margin: 12px 0; border-radius: 9px; padding: 14px; color: #fff; font-weight: 700; text-decoration: none; transition: transform .18s ease, filter .18s ease; }
+        .portal-link:hover { transform: translateY(-2px); filter: brightness(.94); }
+        .btn-admin { background: #0878d1; }
+        .btn-teacher { background: #28a745; }
+        .btn-dev { background: #198754; }
+        .support { margin-top: 18px; color: #555; font-size: 13px; font-weight: 600; }
+        .brand { margin-top: 12px; color: #198754; font-size: 14px; font-weight: 800; letter-spacing: .5px; }
+        .notice-banner { width: min(100%, 920px); overflow: hidden; border: 1px solid #fecaca; border-inline-start: 6px solid #dc2626; border-radius: 14px; background: linear-gradient(120deg, #fff7ed, #fff); box-shadow: 0 12px 32px #7f1d1d18; animation: notice-enter .45s ease both; }
+        .notice-content { padding: 18px 22px; }
+        .notice-kicker { margin: 0 0 6px; color: #b91c1c; font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+        .notice-message { margin: 0; color: #374151; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .notice-image { display: block; width: 100%; max-height: 280px; object-fit: contain; background: #f8fafc; }
+        .notice-loading { color: var(--muted); font-size: 13px; }
+        @keyframes notice-enter { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+        .chat-launcher { position: fixed; right: 22px; bottom: 22px; z-index: 20; border: 0; border-radius: 999px; padding: 15px 20px; background: linear-gradient(120deg, #2563eb, #7c3aed); color: #fff; box-shadow: 0 10px 28px #312e8170; font-size: 15px; font-weight: 750; cursor: pointer; animation: launcher-pulse 2.4s ease-in-out infinite; }
+        .chat-launcher:hover { filter: brightness(1.08); }
+        @keyframes launcher-pulse { 0%, 100% { box-shadow: 0 10px 28px #312e8170; } 50% { box-shadow: 0 12px 34px #4f46e599; } }
+        .chat-backdrop { position: fixed; inset: 0; z-index: 19; background: #0f172a55; backdrop-filter: blur(2px); }
+        .chat-backdrop[hidden] { display: none; }
+        .chat-frame { position: fixed; right: 22px; bottom: 92px; z-index: 21; display: flex; flex-direction: column; width: min(390px, calc(100vw - 28px)); height: min(560px, calc(100vh - 120px)); overflow: hidden; border: 1px solid #dbe3ee; border-radius: 18px; background: var(--surface); box-shadow: 0 22px 65px #0f172a38; transform: translateY(18px) scale(.98); opacity: 0; transition: transform .24s ease, opacity .24s ease; }
+        .chat-frame[hidden] { display: none; }
+        .chat-frame.is-open { transform: translateY(0) scale(1); opacity: 1; }
+        .chat-header { display: flex; align-items: center; justify-content: space-between; padding: 15px 17px; background: linear-gradient(120deg, #1d4ed8, #6d28d9); color: #fff; }
+        .chat-title { margin: 0; font-size: 15px; }
+        .chat-subtitle { margin: 3px 0 0; color: #e0e7ff; font-size: 12px; }
+        .chat-close { border: 0; background: transparent; color: #fff; font-size: 24px; cursor: pointer; }
+        .chat-timeline { display: flex; flex: 1; flex-direction: column; gap: 11px; overflow-y: auto; padding: 17px; background: #f8fafc; }
+        .chat-bubble { max-width: 88%; border-radius: 14px; padding: 10px 13px; color: #243447; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .chat-bubble.assistant { align-self: flex-start; border: 1px solid #e2e8f0; border-bottom-left-radius: 4px; background: #fff; }
+        .chat-bubble.user { align-self: flex-end; border-bottom-right-radius: 4px; background: #e0e7ff; }
+        .chat-loading { width: 100%; height: 3px; overflow: hidden; margin-top: 8px; border-radius: 5px; background: #e2e8f0; }
+        .chat-loading::after { display: block; width: 40%; height: 100%; border-radius: inherit; background: #6366f1; content: ""; animation: loading-slide 1s ease-in-out infinite; }
+        @keyframes loading-slide { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+        .chat-form { display: flex; gap: 9px; padding: 12px; border-top: 1px solid #e2e8f0; }
+        .chat-input { flex: 1; min-width: 0; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font: inherit; }
+        .chat-send { border: 0; border-radius: 10px; padding: 0 15px; background: #4f46e5; color: #fff; font-weight: 700; cursor: pointer; }
+        .chat-send:disabled { opacity: .6; cursor: wait; }
+        @media (max-width: 520px) {
+            body { padding: 78px 14px 104px; justify-content: flex-start; }
+            .lang-switcher-bar { top: 14px; inset-inline-end: 14px; }
+            .container { padding: 28px 22px; }
+            .chat-launcher { right: 14px; bottom: 14px; left: 14px; padding: 14px 12px; font-size: 14px; }
+            .chat-frame { right: 14px; bottom: 78px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="lang-switcher-bar">
+        <a href="/static/app-release-signed.apk" class="catalog-btn" download>{{ translations.download_app }}</a>
+        <a href="/set_language/{{ next_lang }}" class="lang-btn">{{ translations.lang_toggle }}</a>
+    </div>
+
+    <main class="portal-main">
+        <section id="global-notice" class="notice-banner" aria-live="polite" hidden>
+            <div class="notice-content">
+                <p class="notice-kicker">🚨 Emergency Notice</p>
+                <p id="global-notice-message" class="notice-message"></p>
+            </div>
+            <img id="global-notice-image" class="notice-image" alt="Image attached to the college announcement" hidden>
+        </section>
+        <p id="global-notice-loading" class="notice-loading" role="status">Checking for current announcements…</p>
+
+        <section class="container" aria-label="College attendance portal">
+            <h1>{{ translations.title }}</h1>
+            <p class="subtitle">{{ translations.subtitle }}</p>
+            <a href="/login/admin" class="portal-link btn-admin">{{ translations.admin_btn }}</a>
+            <a href="/login/teacher" class="portal-link btn-teacher">{{ translations.teacher_btn }}</a>
+            <a href="/login/developer" class="portal-link btn-dev">{{ translations.dev_btn }}</a>
+            <div class="support">{{ translations.support }}: 03426600749</div>
+            <div class="brand">Çukur</div>
+        </section>
+    </main>
+
+    <button id="chat-launcher" class="chat-launcher" type="button" aria-expanded="false" aria-controls="native-chat-frame">
+        🤖 CAS Intelligent AI Assistant - Chat Live
+    </button>
+    <div id="chat-backdrop" class="chat-backdrop" aria-hidden="true" hidden></div>
+    <section id="native-chat-frame" class="chat-frame" role="dialog" aria-modal="true" aria-labelledby="chat-heading" hidden>
+        <header class="chat-header">
+            <div>
+                <h2 id="chat-heading" class="chat-title">CAS Intelligent AI Assistant</h2>
+                <p class="chat-subtitle">Ask in English or Roman Urdu</p>
+            </div>
+            <button id="chat-close" class="chat-close" type="button" aria-label="Close chat">×</button>
+        </header>
+        <div id="chat-timeline" class="chat-timeline" role="log" aria-live="polite">
+            <div class="chat-bubble assistant">Assalamu Alaikum! How can I help you today? For an attendance report, share the class name and roll number.</div>
+        </div>
+        <form id="native-chat-form" class="chat-form">
+            <input id="native-chat-input" class="chat-input" type="text" maxlength="2000" autocomplete="off" placeholder="Write your message…" aria-label="Your message" required>
+            <button id="native-chat-send" class="chat-send" type="submit">Send</button>
+        </form>
+    </section>
+
+    <script>
+        (function() {
+            const notice = document.getElementById('global-notice');
+            const noticeMessage = document.getElementById('global-notice-message');
+            const noticeImage = document.getElementById('global-notice-image');
+            const noticeLoading = document.getElementById('global-notice-loading');
+            fetch('/api/global_notice', {credentials: 'same-origin'})
+                .then(async function(response) {
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.message || 'Could not load announcements.');
+                    return result;
+                })
+                .then(function(result) {
+                    noticeLoading.hidden = true;
+                    if (!result.notice) return;
+                    noticeMessage.textContent = result.notice.message;
+                    if (result.notice.image_path) {
+                        noticeImage.src = '/static/' + result.notice.image_path
+                            .split('/').map(encodeURIComponent).join('/');
+                        noticeImage.hidden = false;
+                    }
+                    notice.hidden = false;
+                })
+                .catch(function(error) {
+                    noticeLoading.textContent = error instanceof Error
+                        ? error.message
+                        : 'Current announcements could not be loaded.';
+                });
+
+            const launcher = document.getElementById('chat-launcher');
+            const frame = document.getElementById('native-chat-frame');
+            const backdrop = document.getElementById('chat-backdrop');
+            const closeButton = document.getElementById('chat-close');
+            const form = document.getElementById('native-chat-form');
+            const input = document.getElementById('native-chat-input');
+            const sendButton = document.getElementById('native-chat-send');
+            const timeline = document.getElementById('chat-timeline');
+
+            function setChatOpen(open) {
+                launcher.setAttribute('aria-expanded', String(open));
+                if (open) {
+                    backdrop.hidden = false;
+                    frame.hidden = false;
+                    requestAnimationFrame(function() { frame.classList.add('is-open'); });
+                    input.focus();
+                } else {
+                    frame.classList.remove('is-open');
+                    window.setTimeout(function() {
+                        if (!frame.classList.contains('is-open')) {
+                            frame.hidden = true;
+                            backdrop.hidden = true;
+                        }
+                    }, 240);
+                    launcher.focus();
+                }
+            }
+
+            function addBubble(text, role) {
+                const bubble = document.createElement('div');
+                bubble.className = 'chat-bubble ' + role;
+                bubble.textContent = text;
+                timeline.append(bubble);
+                timeline.scrollTop = timeline.scrollHeight;
+                return bubble;
+            }
+
+            launcher.addEventListener('click', function() {
+                setChatOpen(launcher.getAttribute('aria-expanded') !== 'true');
+            });
+            closeButton.addEventListener('click', function() { setChatOpen(false); });
+            backdrop.addEventListener('click', function() { setChatOpen(false); });
+            form.addEventListener('submit', async function(event) {
+                event.preventDefault();
+                const message = input.value.trim();
+                if (!message || sendButton.disabled) return;
+                addBubble(message, 'user');
+                input.value = '';
+                sendButton.disabled = true;
+                const loading = document.createElement('div');
+                loading.className = 'chat-bubble assistant';
+                loading.setAttribute('aria-label', 'Assistant is responding');
+                loading.innerHTML = '<span>Thinking…</span><div class="chat-loading"></div>';
+                timeline.append(loading);
+                timeline.scrollTop = timeline.scrollHeight;
+                try {
+                    const response = await fetch('/api/native_chat', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+                        body: JSON.stringify({message: message})
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.message || 'The assistant could not respond.');
+                    addBubble(result.reply, 'assistant');
+                } catch (error) {
+                    addBubble(error instanceof Error ? error.message : 'The assistant is temporarily unavailable.', 'assistant');
+                } finally {
+                    loading.remove();
+                    sendButton.disabled = false;
+                    input.focus();
+                }
+            });
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && launcher.getAttribute('aria-expanded') === 'true') {
+                    setChatOpen(false);
+                }
+            });
+        })();
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js', {scope: '/'})
+                    .catch(function(error) { console.warn('Service worker registration failed.', error); });
+            });
+        }
+    </script>
+</body>
+</html>

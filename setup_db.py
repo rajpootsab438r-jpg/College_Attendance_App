@@ -93,6 +93,7 @@ def setup_database():
                 if 'client_timestamp' not in attendance_columns:
                     conn.execute("ALTER TABLE attendance ADD COLUMN client_timestamp TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                conn.execute("CREATE TABLE IF NOT EXISTS global_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, image_path TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
                 conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL, sections TEXT NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS academic_class_options (program_key TEXT NOT NULL, part TEXT NOT NULL, section TEXT NOT NULL, PRIMARY KEY (program_key, part, section))")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
@@ -192,6 +193,14 @@ def setup_database():
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sync_operations (
                     operation_id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS global_notifications (
+                    id SERIAL PRIMARY KEY,
+                    message TEXT NOT NULL,
+                    image_path TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
