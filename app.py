@@ -1427,7 +1427,7 @@ def upload_student_sheet():
     if not offline_sync_actor_matches('admin', session.get('user_id')):
         return jsonify({'status': 'error', 'message': 'This admin session is no longer valid.'}), 403
 
-    image_file = request.files.get('student_sheet')
+    image_file = request.files.get('student_list_image')
     if image_file is None or not image_file.filename:
         return jsonify({'status': 'error', 'message': 'Choose a class-list image to upload.'}), 400
     mime_type = (image_file.mimetype or '').lower()
@@ -1473,16 +1473,16 @@ def upload_student_sheet():
         app.logger.exception('Gemini student-sheet extraction failed.')
         return jsonify({'status': 'error', 'message': 'Gemini Vision is temporarily unavailable.'}), 502
 
-    program = parsed.get('program', '')
-    part = parsed.get('part', '')
+    program = parsed.get('program')
+    part = parsed.get('part')
     if not isinstance(program, str) or not isinstance(part, str):
         return jsonify({'status': 'error', 'message': 'The class or part/semester could not be read from the image.'}), 422
-    program = program.strip() or request.form.get('program', '').strip()
-    part = part.strip() or request.form.get('part', '').strip()
+    program = program.strip()
+    part = part.strip()
     if not program or not part:
         return jsonify({
             'status': 'error',
-            'message': 'The image did not identify a supported program and part/semester. Select them on the form and retry.'
+            'message': 'The image did not identify a supported program and part/semester.'
         }), 422
 
     clean_students = []
@@ -1525,7 +1525,7 @@ def upload_student_sheet():
     except Exception:
         conn.rollback()
         app.logger.exception('Could not save extracted student records.')
-        raise
+        return jsonify({'status': 'error', 'message': 'The extracted student records could not be saved.'}), 500
     finally:
         conn.close()
 

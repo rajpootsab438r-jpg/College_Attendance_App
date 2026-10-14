@@ -409,21 +409,11 @@
         <h3>📷 Scan / Import Student List</h3>
         <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="scan-student-form" data-open-label="+ Scan / Import Students" data-close-label="− Cancel">+ Scan / Import Students</button>
         <div id="scan-student-form" class="form-panel" hidden>
-            <p>Upload a clear roster image for Gemini Vision to detect the program, part/semester, roll numbers, and student names. PDF files can still be OCR-scanned in this browser.</p>
-            <label for="student-scan-image">PDF or scanned image</label>
-            <input id="student-scan-image" type="file" accept="application/pdf, image/*" capture="environment">
-            <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <select id="scan-program" data-academic-program required>
-                    <option value="">-- Select Program --</option>
-                </select>
-                <select id="scan-part" data-academic-part required disabled>
-                    <option value="">-- Select Part / Semester --</option>
-                </select>
-            </div>
-            <button id="scan-students-button" type="button">Read and import sheet</button>
-            <p>For manual import, separate each row into columns with tabs, |, or at least two spaces: roll number, student name, optional father name, optional phone number.</p>
-            <textarea id="scan-students-text" rows="10" style="width:100%;box-sizing:border-box;padding:12px;" placeholder="Roll number | Student name | Father name (optional) | Phone (optional)"></textarea>
-            <button id="import-scanned-students" type="button" class="btn-success">Review and add students</button>
+            <p>Upload a clear roster image for Gemini Vision to detect the class, part/semester, roll numbers, and student names.</p>
+            <form id="student-scan-form" action="/admin/upload_student_sheet" method="POST" enctype="multipart/form-data">
+                <input type="file" name="student_list_image" accept="image/*" required>
+                <button type="submit">✨ Scan &amp; Import Students</button>
+            </form>
             <p id="scan-status" role="status" aria-live="polite"></p>
         </div>
     </div>
@@ -854,7 +844,6 @@
     }
 
     configureAcademicSelectors('student-program', 'student-part');
-    configureAcademicSelectors('scan-program', 'scan-part');
   })();
 </script>
 <script>
@@ -890,138 +879,36 @@
   })();
 </script>
 <script>
-  document.getElementById('scan-students-button').addEventListener('click', async function() {
-    const file = document.getElementById('student-scan-image').files[0];
+  document.getElementById('student-scan-form').addEventListener('submit', async function(event) {
+    event.preventDefault();
     const status = document.getElementById('scan-status');
+    const file = this.elements.student_list_image.files[0];
+    const button = this.querySelector('button[type="submit"]');
     if (!file) {
-      status.textContent = 'Choose or take a clear image first.';
+      status.textContent = 'Choose a clear roster image first.';
       return;
     }
-    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     if (file.size > 15 * 1024 * 1024) {
       status.textContent = 'Uploads must be 15 MB or smaller.';
       return;
     }
-    if (isPdf && (!window.Tesseract || !window.pdfjsLib)) {
-      status.textContent = 'The PDF or OCR library could not load. Check your connection, then retry; you can also paste tab-separated text below.';
-      return;
-    }
-    this.disabled = true;
-    if (!isPdf) {
-      status.textContent = 'Uploading the original image to Gemini Vision for roster extraction...';
-      try {
-        const upload = new FormData();
-        upload.append('student_sheet', file);
-        upload.append('program', document.getElementById('scan-program').value);
-        upload.append('part', document.getElementById('scan-part').value);
-        const response = await fetch('/admin/upload_student_sheet', {
-          method: 'POST',
-          body: upload,
-          credentials: 'same-origin',
-          headers: {'Accept': 'application/json'}
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message || 'The sheet could not be imported.');
-        status.textContent = `${result.imported} students saved for ${result.program} ${result.part}; ${result.skipped} duplicate rows skipped.`;
-        window.location.href = '/admin/dashboard';
-      } catch (error) {
-        status.textContent = 'Image import failed: ' + (error instanceof Error ? error.message : 'Please retry.');
-      } finally {
-        this.disabled = false;
-      }
-      return;
-    }
-    status.textContent = 'Reading PDF pages. Large documents may take a little while...';
-    let worker;
+    button.disabled = true;
+    status.textContent = 'Uploading the roster image to Gemini Vision for extraction...';
     try {
-      worker = await Tesseract.createWorker('eng');
-      let recognizedText = '';
-      if (isPdf) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        const pdf = await window.pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
-        if (pdf.numPages > 10) throw new Error('PDF files may contain no more than 10 pages.');
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Could not create a canvas to read this PDF.');
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-          status.textContent = `Reading PDF page ${pageNumber} of ${pdf.numPages}...`;
-          const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({scale: 1.5});
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          await page.render({canvasContext: context, viewport}).promise;
-          const result = await worker.recognize(canvas);
-          recognizedText += result.data.text + '\n';
-        }
-        canvas.width = 0;
-        canvas.height = 0;
-      } else {
-        const result = await worker.recognize(file);
-        recognizedText = result.data.text;
-      }
-      document.getElementById('scan-students-text').value = recognizedText;
-      status.textContent = 'Scan finished. Check every row and correct OCR mistakes before importing.';
-    } catch (error) {
-      status.textContent = 'Scan failed: ' + error.message;
-    } finally {
-      if (worker) await worker.terminate();
-      this.disabled = false;
-    }
-  });
-
-  document.getElementById('import-scanned-students').addEventListener('click', async function() {
-    const status = document.getElementById('scan-status');
-    const program = document.getElementById('scan-program').value;
-    const part = document.getElementById('scan-part').value;
-    const text = document.getElementById('scan-students-text').value.trim();
-    if (!program || !part) {
-      status.textContent = 'Select the program and part/semester for this list.';
-      return;
-    }
-    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    const rows = [];
-    for (let index = 0; index < lines.length; index++) {
-      const columns = lines[index].split(/\t+|\s{2,}|\s*\|\s*/).map(value => value.trim()).filter(Boolean);
-      if (columns.length < 2 || columns.length > 4) {
-        status.textContent = 'Could not read row ' + (index + 1) + '. Use: roll number | student name | optional father name | optional phone. Fix the text and retry.';
-        return;
-      }
-      rows.push({
-        roll_no: columns[0],
-        student_name: columns[1],
-        father_name: columns[2] || '',
-        phone_number: columns[3] || '',
-        program: program,
-        part: part
+      const response = await fetch(this.action, {
+        method: 'POST',
+        body: new FormData(this),
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json'}
       });
-    }
-    if (!rows.length) {
-      status.textContent = 'No student rows found. Scan an image or enter rows above.';
-      return;
-    }
-    if (!window.confirm('Review complete? Import ' + rows.length + ' rows now? Duplicate roll numbers will be skipped.')) return;
-
-    this.disabled = true;
-    status.textContent = 'Importing ' + rows.length + ' student rows...';
-    try {
-      const result = await window.OfflineSync.sendOrQueue(
-        '/admin/import_students',
-        JSON.stringify({rows: rows}),
-        'application/json',
-        'pending_student_import'
-      );
-      if (result.queued) {
-        status.textContent = rows.length + ' students saved on this device and will sync automatically when online.';
-        window.OfflineSync.updatePendingCount(status.textContent);
-      } else {
-        status.textContent = result.result.imported + ' students added; ' + result.result.skipped + ' duplicate rows skipped.';
-        window.location.href = '/admin/dashboard';
-      }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || `The sheet could not be imported (HTTP ${response.status}).`);
+      status.textContent = `${result.imported} students saved for ${result.program} ${result.part}; ${result.skipped} duplicate rows skipped.`;
+      window.location.href = '/admin/dashboard';
     } catch (error) {
-      status.textContent = 'Import failed: ' + error.message;
+      status.textContent = 'Image import failed: ' + (error instanceof Error ? error.message : 'Please retry.');
     } finally {
-      this.disabled = false;
+      button.disabled = false;
     }
   });
 
@@ -1033,7 +920,5 @@
     });
   }
 </script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </body>
 </html>
