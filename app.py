@@ -409,6 +409,29 @@ def academic_program_options(cursor):
     ]
 
 
+def active_academic_program_options(cursor, college_id, seeded_programs):
+    cursor.execute(
+        'SELECT DISTINCT program, part FROM students '
+        'WHERE college_id = %s AND program IS NOT NULL AND part IS NOT NULL',
+        (college_id,)
+    )
+    active_parts_by_program = {}
+    for row in cursor.fetchall():
+        normalized_program = re.sub(r'[^a-z0-9]', '', row['program'].lower())
+        active_parts_by_program.setdefault(normalized_program, set()).add(row['part'])
+
+    active_programs = []
+    for program_config in seeded_programs:
+        normalized_key = re.sub(r'[^a-z0-9]', '', program_config['key'].lower())
+        active_parts = [
+            part for part in program_config['parts']
+            if part in active_parts_by_program.get(normalized_key, set())
+        ]
+        if active_parts:
+            active_programs.append({**program_config, 'parts': active_parts})
+    return active_programs
+
+
 @app.route('/api/native_chat', methods=['POST'])
 def native_chat():
     payload = request.get_json(silent=True)
@@ -568,32 +591,21 @@ def admin_broadcast_message():
     image_path = None
     saved_image_path = None
     if image_file and image_file.filename:
-        allowed_images = {
-            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-            '.gif': 'image/gif', '.webp': 'image/webp'
-        }
-        extension = os.path.splitext(secure_filename(image_file.filename))[1].lower()
-        if extension not in allowed_images or image_file.mimetype != allowed_images[extension]:
-            return jsonify({'status': 'error', 'message': 'Choose a supported JPG, PNG, GIF, or WebP image.'}), 400
-        image_data = image_file.stream.read(5 * 1024 * 1024 + 1)
-        if len(image_data) > 5 * 1024 * 1024:
-            return jsonify({'status': 'error', 'message': 'Broadcast images must be 5 MB or smaller.'}), 413
-        image_signatures = {
-            '.jpg': lambda data: data.startswith(b'\xff\xd8\xff'),
-            '.jpeg': lambda data: data.startswith(b'\xff\xd8\xff'),
-            '.png': lambda data: data.startswith(b'\x89PNG\r\n\x1a\n'),
-            '.gif': lambda data: data.startswith((b'GIF87a', b'GIF89a')),
-            '.webp': lambda data: len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP'
-        }
-        if not image_signatures[extension](image_data):
-            return jsonify({'status': 'error', 'message': 'The selected file is not a valid supported image.'}), 400
-        filename = f'{secrets.token_hex(16)}{extension}'
+        safe_original_name = secure_filename(image_file.filename)
+        extension = os.path.splitext(safe_original_name)[1].lower()
+        if not safe_original_name or extension not in {'.jpg', '.jpeg', '.png', '.gif', '.webp'}:
+            return jsonify({'status': 'error', 'message': 'Choose a JPG, JPEG, PNG, GIF, or WebP image.'}), 400
+        filename = secure_filename(f'{secrets.token_hex(16)}_{safe_original_name}')
         image_path = os.path.join('uploads', 'broadcasts', filename).replace(os.sep, '/')
         saved_image_path = os.path.join(STATIC_DIR, *image_path.split('/'))
         try:
             os.makedirs(os.path.dirname(saved_image_path), exist_ok=True)
             with open(saved_image_path, 'wb') as image_destination:
-                image_destination.write(image_data)
+                while True:
+                    image_chunk = image_file.stream.read(64 * 1024)
+                    if not image_chunk:
+                        break
+                    image_destination.write(image_chunk)
         except OSError:
             app.logger.exception('Could not save the uploaded global announcement image.')
             return jsonify({'status': 'error', 'message': 'The announcement image could not be saved.'}), 500
@@ -827,9 +839,6 @@ def admin_dashboard():
     cursor.execute('SELECT display_name FROM admins WHERE id = %s', (college_id,))
     admin_profile = cursor.fetchone()
     academic_programs = academic_program_options(cursor)
-    academic_parts = sorted({
-        part for program_config in academic_programs for part in program_config['parts']
-    })
     csrf_token = session.setdefault('admin_csrf_token', secrets.token_urlsafe(32))
     if admin_profile:
         current_admin_name = admin_profile['display_name'] or college_name
@@ -1006,6 +1015,14 @@ def admin_dashboard():
         if is_offline_sync_request():
             conn.close()
             return sync_json_response()
+
+    active_academic_programs = active_academic_program_options(
+        cursor, college_id, academic_programs
+    )
+    active_academic_parts = sorted({
+        part for program_config in active_academic_programs
+        for part in program_config['parts']
+    })
     if selected_program and selected_part:
         cursor.execute(
             "SELECT * FROM students WHERE college_id = %s "
@@ -1062,7 +1079,10 @@ def admin_dashboard():
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
                            current_admin_name=current_admin_name, current_lang=current_lang,
-                           academic_programs=academic_programs, academic_parts=academic_parts,
+                           academic_programs=academic_programs,
+                           active_academic_programs=active_academic_programs,
+                           active_academic_parts=active_academic_parts,
+                           ai_configured=bool(os.environ.get('GEMINI_API_KEY', '').strip()),
                            csrf_token=csrf_token,
                            edit_teacher=edit_teacher_data, edit_student=edit_student_data)
 
@@ -1718,9 +1738,12 @@ def offline_seed_data():
         )
         students = [dict(row) for row in cursor.fetchall()]
         seeded_programs = academic_program_options(cursor)
+        active_programs = active_academic_program_options(
+            cursor, college_id, seeded_programs
+        )
         canonical_programs = {
             re.sub(r'[^a-z0-9]', '', program_config['key'].lower()): program_config['key']
-            for program_config in seeded_programs
+            for program_config in active_programs
         }
 
         cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
@@ -1780,7 +1803,7 @@ def offline_seed_data():
                     'display_name': program_config['display_name'],
                     'parts': program_config['parts']
                 }
-                for program_config in seeded_programs
+                for program_config in active_programs
             ],
             'classes': list(class_map.values()),
             'attendance': attendance_records
@@ -1810,7 +1833,10 @@ def teacher_dashboard():
     cursor.execute('SELECT total_periods FROM admins WHERE id = %s', (college_id,))
     col_info = cursor.fetchone()
     total_periods = int(col_info['total_periods'] or 6) if col_info else 6
-    academic_programs = academic_program_options(cursor)
+    seeded_programs = academic_program_options(cursor)
+    academic_programs = active_academic_program_options(
+        cursor, college_id, seeded_programs
+    )
     academic_parts = sorted({
         part for program_config in academic_programs for part in program_config['parts']
     })

@@ -315,6 +315,10 @@
 </section>
 
 <div class="grid" style="margin-bottom:20px;">
+    <section class="card full-width" aria-live="polite">
+        <h3>🤖 CAS Web AI Assistant</h3>
+        <p>{% if ai_configured %}✅ CAS Web AI Assistant is Configured &amp; Active{% else %}CAS Web AI Assistant is currently unavailable.{% endif %}</p>
+    </section>
     <section class="card full-width">
         <h3>🌐 Global Parent Notifications</h3>
         <button type="button" id="admin-broadcast-toggle" class="form-toggle" aria-expanded="false" aria-controls="admin-broadcast-panel" data-form-toggle data-open-label="📢 Send Mass Broadcast Message" data-close-label="✕ Close Broadcast Settings">📢 Send Mass Broadcast Message</button>
@@ -324,8 +328,8 @@
                 <label for="broadcast-announcement">Announcement for parents (up to 4,096 characters)</label>
                 <textarea id="broadcast-announcement" name="announcement" rows="5" maxlength="4096"
                     style="width:100%;box-sizing:border-box;padding:12px;" required></textarea>
-                <label for="broadcast-image">Optional announcement image (JPG, PNG, GIF, or WebP; up to 5 MB)</label>
-                <input id="broadcast-image" type="file" name="broadcast_image" accept="image/*">
+                <label for="broadcast-image">Optional announcement image (JPG, JPEG, PNG, GIF, or WebP; no application size limit)</label>
+                <input id="broadcast-image" type="file" name="broadcast_image" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">
                 <button type="submit" id="broadcast-submit">Publish Global Announcement</button>
                 <p id="broadcast-status" role="status" aria-live="polite"></p>
             </form>
@@ -490,13 +494,13 @@
     <form id="admin-filter-form" method="GET" action="/admin/dashboard" class="filter-form-bar">
         <select name="program" id="admin-filter-program">
             <option value="">-- All Programs --</option> 
-            {% for program_config in academic_programs %}
+            {% for program_config in active_academic_programs %}
             <option value="{{ program_config.key }}" {% if selected_program|lower|replace('-', '')|replace(' ', '')|replace('.', '') == program_config.key|lower|replace('-', '')|replace(' ', '')|replace('.', '') %}selected{% endif %}>{{ program_config.display_name }}</option>
             {% endfor %}
         </select> 
         <select name="part" id="admin-filter-part">
             <option value="">-- All Parts/Semesters --</option> 
-            {% for academic_part in academic_parts %}
+            {% for academic_part in active_academic_parts %}
             <option value="{{ academic_part }}" {% if selected_part|lower == academic_part|lower %}selected{% endif %}>{{ academic_part }}</option>
             {% endfor %}
         </select> 
@@ -544,7 +548,18 @@
     const filterStatus = document.getElementById('admin-filter-status');
     const message = document.getElementById('admin-filter-message');
     const actor = document.body.dataset.offlineActor;
+    const activePrograms = {{ active_academic_programs|tojson }};
     if (!form || !programSelect || !partSelect || !tableBody || !window.OfflineSync) return;
+
+    function populateActiveParts(selectedPart) {
+      const selectedProgram = activePrograms.find(program => program.key === programSelect.value);
+      const availableParts = selectedProgram
+        ? selectedProgram.parts
+        : [...new Set(activePrograms.flatMap(program => program.parts))];
+      partSelect.replaceChildren(new Option('-- All Parts/Semesters --', ''));
+      availableParts.forEach(part => partSelect.add(new Option(part, part)));
+      if (availableParts.includes(selectedPart)) partSelect.value = selectedPart;
+    }
 
     function snapshotKey(program, part) {
       return `admin-students:${actor}:${program}:${part}`;
@@ -675,12 +690,16 @@
       }
     }
 
-    [programSelect, partSelect].forEach(select => {
-      select.addEventListener('change', event => {
-        event.preventDefault();
-        refreshStudents();
-      });
+    programSelect.addEventListener('change', event => {
+      event.preventDefault();
+      populateActiveParts(partSelect.value);
+      refreshStudents();
     });
+    partSelect.addEventListener('change', event => {
+      event.preventDefault();
+      refreshStudents();
+    });
+    populateActiveParts(partSelect.value);
     document.getElementById('admin-clear-filter')?.addEventListener('click', () => {
       programSelect.value = '';
       partSelect.value = '';
