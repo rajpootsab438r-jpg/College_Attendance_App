@@ -1439,9 +1439,8 @@ def upload_student_sheet():
     if len(image_bytes) > 15 * 1024 * 1024:
         return jsonify({'status': 'error', 'message': 'Images must be 15 MB or smaller.'}), 413
 
-    api_key = os.environ.get('GEMINI_API_KEY', '').strip()
-    if not api_key:
-        return jsonify({'status': 'error', 'message': 'Gemini Vision is not configured on this server.'}), 503
+    api_key = os.environ.get('GEMINI_API_KEY')
+    model = "gemini-2.5-flash"
 
     prompt = (
         'Read this complete class roster image, including annotations near every top and bottom '
@@ -1454,13 +1453,11 @@ def upload_student_sheet():
         'Use empty strings when the program or part cannot be confidently read.'
     )
     try:
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key) if api_key else genai.Client()
+        image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
         completion = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[
-                prompt,
-                genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-            ],
+            model=model,
+            contents=[prompt, image_part],
             config={'response_mime_type': 'application/json'}
         )
         parsed = json.loads(completion.text)
