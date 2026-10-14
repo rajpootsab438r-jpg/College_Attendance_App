@@ -6,6 +6,7 @@ import hmac
 import html
 import re
 import secrets
+import time
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
 from google import genai
@@ -1441,6 +1442,11 @@ def upload_student_sheet():
 
     api_key = os.environ.get('GEMINI_API_KEY')
     model = "gemini-2.5-flash"
+    fallback_model = "gemini-2.5-flash-lite"
+    overload_message = (
+        "Google AI system is processing heavy queues. Please click 'Scan & Import "
+        "Students' again in a few seconds to bypass the overload."
+    )
 
     prompt = (
         'Read this complete class roster image, including annotations near every top and bottom '
@@ -1453,22 +1459,64 @@ def upload_student_sheet():
         'Use empty strings when the program or part cannot be confidently read.'
     )
     try:
-        client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-        completion = client.models.generate_content(
-            model=model,
-            contents=[prompt, image_part],
-            config={'response_mime_type': 'application/json'}
+        client = genai.Client(
+            api_key=api_key or None,
+            http_options=genai.types.HttpOptions(timeout=15000)
         )
-        parsed = json.loads(completion.text)
-        if not isinstance(parsed, dict) or not isinstance(parsed.get('students'), list):
-            raise ValueError('Gemini returned an invalid class roster shape.')
+        image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+        def generate_roster(model_name):
+            completion = client.models.generate_content(
+                model=model_name,
+                contents=[prompt, image_part],
+                config={'response_mime_type': 'application/json'}
+            )
+            result = json.loads(completion.text)
+            if not isinstance(result, dict) or not isinstance(result.get('students'), list):
+                raise ValueError('Gemini returned an invalid class roster shape.')
+            return result
+
+        def is_overload_error(error):
+            status = getattr(error, 'status_code', None)
+            if status is None:
+                status = getattr(error, 'code', None)
+            message = f'{status or ""} {error}'.lower()
+            return any(
+                marker in message
+                for marker in ('503', '429', 'resource_exhausted', 'too many requests', 'unavailable', 'overloaded')
+            )
+
+        def is_timeout_error(error):
+            message = f'{type(error).__name__} {error}'.lower()
+            return 'timeout' in message or 'timed out' in message
+
+        retry_with_fallback = False
+        for attempt in range(3):
+            try:
+                parsed = generate_roster(model)
+                break
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise
+            except Exception as error:
+                if is_overload_error(error):
+                    if attempt < 2:
+                        time.sleep(0.5 * (2 ** attempt))
+                        continue
+                    retry_with_fallback = True
+                    break
+                if is_timeout_error(error) and attempt < 2:
+                    time.sleep(0.5 * (2 ** attempt))
+                    continue
+                raise
+
+        if retry_with_fallback:
+            parsed = generate_roster(fallback_model)
     except (TypeError, ValueError, json.JSONDecodeError):
         app.logger.exception('Gemini returned an invalid student-sheet extraction.')
         return jsonify({'status': 'error', 'message': 'The class sheet could not be read. Use a clearer image or manual import.'}), 502
     except Exception:
         app.logger.exception('Gemini student-sheet extraction failed.')
-        return jsonify({'status': 'error', 'message': 'Gemini Vision is temporarily unavailable.'}), 502
+        return jsonify({'status': 'error', 'message': overload_message}), 503
 
     program = parsed.get('program')
     part = parsed.get('part')
