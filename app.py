@@ -8,7 +8,7 @@ import re
 import secrets
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
-import google.generativeai as genai
+from google import genai
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import date, datetime, timedelta, timezone
@@ -409,6 +409,57 @@ def academic_program_options(cursor):
     ]
 
 
+def insert_student_record(cursor, student_values):
+    values = {
+        'roll_no': student_values['roll_no'],
+        'student_name': student_values['student_name'],
+        'father_name': student_values.get('father_name') or '',
+        'phone_number': student_values.get('phone_number') or '',
+        'program': student_values['program'],
+        'part': student_values['part'],
+        'college_id': student_values['college_id']
+    }
+    if get_database_url().startswith('sqlite'):
+        columns = cursor.execute('PRAGMA table_info(students)').fetchall()
+        column_info = [
+            (column['name'], bool(column['notnull']), column['dflt_value'], column['type'], bool(column['pk']))
+            for column in columns
+        ]
+    else:
+        cursor.execute(
+            'SELECT column_name, is_nullable, column_default, data_type '
+            'FROM information_schema.columns '
+            "WHERE table_schema = current_schema() AND table_name = 'students'"
+        )
+        column_info = [
+            (
+                column['column_name'],
+                column['is_nullable'] == 'NO',
+                column['column_default'],
+                column['data_type'],
+                column['column_name'] == 'id'
+            )
+            for column in cursor.fetchall()
+        ]
+
+    for name, required, default, data_type, is_primary_key in column_info:
+        if name in values or not required or default is not None or is_primary_key:
+            continue
+        if name in {'section', 'class_bunk'}:
+            values[name] = 0 if 'INT' in (data_type or '').upper() else ''
+
+    names = [name for name, *_ in column_info if name in values]
+    placeholders = ', '.join(['%s'] * len(names))
+    columns_sql = ', '.join(names)
+    values_sql = tuple(values[name] for name in names)
+    cursor.execute(
+        f'INSERT INTO students ({columns_sql}) VALUES ({placeholders}) '
+        'ON CONFLICT (roll_no, college_id) DO NOTHING',
+        values_sql
+    )
+    return cursor.rowcount
+
+
 def active_academic_program_options(cursor, college_id, seeded_programs):
     cursor.execute(
         'SELECT DISTINCT program, part FROM students '
@@ -432,88 +483,118 @@ def active_academic_program_options(cursor, college_id, seeded_programs):
     return active_programs
 
 
+@app.route('/api/attendance_tree', methods=['GET'])
+def attendance_tree():
+    college_id = request.args.get('college_id', '').strip()
+    stream = request.args.get('stream', '').strip()
+    program = request.args.get('program', '').strip()
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if not college_id:
+            cursor.execute('SELECT id, college_name FROM admins ORDER BY college_name')
+            colleges = [
+                {'id': row['id'], 'name': row['college_name']}
+                for row in cursor.fetchall()
+            ]
+            return jsonify({'status': 'success', 'stage': 'college', 'colleges': colleges})
+        if not college_id.isdigit():
+            return jsonify({'status': 'error', 'message': 'College identifier is invalid.'}), 400
+        cursor.execute('SELECT id FROM admins WHERE id = %s', (college_id,))
+        if not cursor.fetchone():
+            return jsonify({'status': 'error', 'message': 'College was not found.'}), 404
+        if not stream:
+            return jsonify({
+                'status': 'success',
+                'stage': 'stream',
+                'streams': ['Intermediate', 'Degrees']
+            })
+        if stream not in {'Intermediate', 'Degrees'}:
+            return jsonify({'status': 'error', 'message': 'Program stream is invalid.'}), 400
+        level_filter = "ap.level = 'Intermediate'" if stream == 'Intermediate' else "ap.level <> 'Intermediate'"
+        if not program:
+            cursor.execute(
+                'SELECT DISTINCT ap.program_key, ap.display_name, ap.level '
+                'FROM students s JOIN academic_programs ap '
+                "ON LOWER(REPLACE(REPLACE(REPLACE(s.program, '-', ''), ' ', ''), '.', '')) = "
+                "LOWER(REPLACE(REPLACE(REPLACE(ap.program_key, '-', ''), ' ', ''), '.', '')) "
+                f'WHERE s.college_id = %s AND {level_filter} '
+                'ORDER BY ap.display_name',
+                (college_id,)
+            )
+            classes = [
+                {
+                    'key': row['program_key'],
+                    'name': row['display_name'],
+                    'level': row['level']
+                }
+                for row in cursor.fetchall()
+            ]
+            return jsonify({'status': 'success', 'stage': 'class', 'classes': classes})
+        cursor.execute(
+            'SELECT DISTINCT part FROM students WHERE college_id = %s '
+            'AND LOWER(REPLACE(REPLACE(REPLACE(program, \'-\', \'\'), \' \', \'\'), \'.\', \'\')) = %s '
+            'ORDER BY part',
+            (
+                college_id,
+                re.sub(r'[^a-z0-9]', '', program.lower())
+            )
+        )
+        parts = [row['part'] for row in cursor.fetchall()]
+        return jsonify({
+            'status': 'success',
+            'stage': 'part',
+            'program': program,
+            'parts': parts
+        })
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('Could not load attendance assistant choices.')
+        return jsonify({'status': 'error', 'message': 'Attendance choices are temporarily unavailable.'}), 503
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 @app.route('/api/native_chat', methods=['POST'])
 def native_chat():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
-        return jsonify({'status': 'error', 'message': 'Send a valid chat message.'}), 400
-    message = payload.get('message')
-    if not isinstance(message, str) or not message.strip():
-        return jsonify({'status': 'error', 'message': 'Enter a message to continue.'}), 400
-    message = message.strip()
-    if len(message) > 2000:
-        return jsonify({'status': 'error', 'message': 'Messages must be 2,000 characters or fewer.'}), 400
+        return jsonify({'status': 'error', 'message': 'Submit a valid attendance query.'}), 400
+    college_id = payload.get('college_id')
+    program = payload.get('program')
+    part = payload.get('part')
+    roll_no = payload.get('roll_no')
+    if not isinstance(college_id, (str, int)) or not str(college_id).isdigit():
+        return jsonify({'status': 'error', 'message': 'Choose a valid college.'}), 400
+    if not all(isinstance(value, str) and value.strip() for value in (program, part, roll_no)):
+        return jsonify({'status': 'error', 'message': 'Choose a program and part, then enter the roll number.'}), 400
+    if len(roll_no.strip()) > 64:
+        return jsonify({'status': 'error', 'message': 'Roll numbers must be 64 characters or fewer.'}), 400
 
-    api_key = os.environ.get('GEMINI_API_KEY', '').strip()
-    if not api_key:
-        return jsonify({'status': 'error', 'message': 'The AI assistant is not configured yet.'}), 503
-
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            'gemini-1.5-flash',
-            system_instruction=(
-                'You are the polite CAS College Attendance System parent assistant. Understand '
-                'English and Roman Urdu. Classify requests for a particular student\'s attendance '
-                'records as student_record. Extract the class/program name (without its part or '
-                'semester) and roll number when present. Never invent student or attendance data. '
-                'Return only a JSON object with string fields intent (student_record or general), '
-                'class_name, roll_number, and reply. For missing identifiers, leave the relevant '
-                'field empty and politely ask for the class name and roll number in the reply. '
-                'For other questions, give a concise, polite reply.'
-            )
-        )
-        completion = model.generate_content(
-            message,
-            generation_config={'response_mime_type': 'application/json'}
-        )
-        parsed = json.loads(completion.text)
-        if not isinstance(parsed, dict):
-            raise ValueError('Gemini returned an invalid response shape.')
-    except (ValueError, json.JSONDecodeError):
-        app.logger.exception('Gemini returned an invalid native chat response.')
-        return jsonify({'status': 'error', 'message': 'The assistant could not read that request. Please try again.'}), 502
-    except Exception:
-        app.logger.exception('Gemini native chat request failed.')
-        return jsonify({'status': 'error', 'message': 'The assistant is temporarily unavailable.'}), 502
-
-    intent = parsed.get('intent')
-    reply = parsed.get('reply')
-    if not isinstance(reply, str) or not reply.strip():
-        reply = 'Please share your question, including your child\'s class and roll number for an attendance report.'
-    if intent != 'student_record':
-        return jsonify({'status': 'success', 'reply': reply[:1200]})
-
-    class_name = parsed.get('class_name')
-    roll_number = parsed.get('roll_number')
-    if not isinstance(class_name, str) or not class_name.strip() or not isinstance(roll_number, str) or not roll_number.strip():
-        return jsonify({'status': 'success', 'reply': reply[:1200]})
-
-    normalized_class = re.sub(r'[^a-z0-9]', '', class_name.casefold())
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        academic_class = validate_academic_class(cursor, program, part)
+        if not academic_class:
+            return jsonify({'status': 'error', 'message': 'The selected program or part is no longer active.'}), 400
         cursor.execute(
-            'SELECT roll_no, program, part, college_id FROM students '
-            "WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(program), '-', ''), ' ', ''), '.', '')) = %s "
-            'AND LOWER(TRIM(roll_no)) = LOWER(%s)',
-            (normalized_class, roll_number.strip())
+            'SELECT roll_no, student_name, program, part, college_id FROM students '
+            'WHERE college_id = %s AND LOWER(TRIM(roll_no)) = LOWER(%s) '
+            'AND LOWER(TRIM(program)) = LOWER(%s) AND LOWER(TRIM(part)) = LOWER(%s)',
+            (college_id, roll_no.strip(), academic_class['program_key'], academic_class['part'])
         )
-        students = cursor.fetchall()
-        if not students:
+        student = cursor.fetchone()
+        if not student:
             return jsonify({
                 'status': 'success',
-                'reply': 'Sorry, I could not find a student record for that class and roll number. Please check the details and try again.'
+                'reply': 'No student was found for that college, class, part, and roll number. Please check the details and try again.'
             })
-        if len(students) > 1:
-            return jsonify({
-                'status': 'success',
-                'reply': 'I found more than one matching record. Please contact your college administration to confirm the correct class and roll number.'
-            })
-        student = students[0]
         cursor.execute(
             'SELECT COUNT(*) AS total_records, '
-            "SUM(CASE WHEN LOWER(TRIM(status)) = 'present' THEN 1 ELSE 0 END) AS present_records "
+            "SUM(CASE WHEN LOWER(TRIM(status)) = 'present' THEN 1 ELSE 0 END) AS present_records, "
+            "SUM(CASE WHEN LOWER(TRIM(status)) = 'absent' THEN 1 ELSE 0 END) AS absent_records "
             'FROM attendance WHERE LOWER(TRIM(student_roll)) = LOWER(%s) AND college_id = %s '
             "AND LOWER(TRIM(status)) IN ('present', 'absent', 'leave')",
             (student['roll_no'], student['college_id'])
@@ -521,22 +602,26 @@ def native_chat():
         attendance = cursor.fetchone()
         total = int(attendance['total_records'] or 0)
         present = int(attendance['present_records'] or 0)
-        percentage = round(present * 100 / total, 1) if total else 0.0
-        student_class = f"{student['program']} ({student['part']})"
-        report = (
-            f"Assalamu Alaikum! The attendance compliance for roll number "
-            f"{student['roll_no']} in {student_class} is {percentage}% "
-            f"({present} present out of {total} recorded periods)."
-            if total else
-            f"Assalamu Alaikum! I found roll number {student['roll_no']} in {student_class}, "
-            'but no attendance has been recorded yet.'
-        )
+        absent = int(attendance['absent_records'] or 0)
+        percentage = round(present * 100 / total, 1) if total else 0
+        if total:
+            report = (
+                f"Attendance summary for {student['student_name']} (Roll {student['roll_no']})\n"
+                f"{student['program']} · {student['part']}\n"
+                f"Present: {present}  |  Absent: {absent}  |  Recorded periods: {total}\n"
+                f"Attendance rate: {percentage}%"
+            )
+        else:
+            report = (
+                f"{student['student_name']} (Roll {student['roll_no']}) is registered in "
+                f"{student['program']} · {student['part']}, but no attendance has been recorded yet."
+            )
         return jsonify({'status': 'success', 'reply': report})
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
         app.logger.exception('Native chat student-record lookup failed.')
         return jsonify({'status': 'error', 'message': 'Student attendance records are temporarily unavailable.'}), 503
     finally:
-        if 'conn' in locals():
+        if conn is not None:
             conn.close()
 
 
@@ -546,20 +631,65 @@ def latest_global_notice():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        college_id = request.args.get('college_id', '').strip()
+        if college_id and not college_id.isdigit():
+            return jsonify({'status': 'error', 'message': 'College identifier is invalid.'}), 400
+        query = (
+            'SELECT n.message, n.image_path, n.created_at, a.id AS college_id, '
+            'a.college_name FROM global_notifications n '
+            'JOIN admins a ON a.id = n.college_id '
+        )
+        params = ()
+        if college_id:
+            query += 'WHERE n.college_id = %s '
+            params = (college_id,)
+        query += 'ORDER BY a.college_name, n.created_at DESC, n.id DESC'
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        notices = [
+            {
+                'college_id': row['college_id'],
+                'college_name': row['college_name'],
+                'message': row['message'],
+                'image_path': row['image_path'],
+                'created_at': str(row['created_at'])
+            }
+            for row in rows
+        ]
+        colleges = []
+        seen_colleges = set()
+        for notice in notices:
+            if notice['college_id'] not in seen_colleges:
+                colleges.append({
+                    'id': notice['college_id'],
+                    'name': notice['college_name']
+                })
+                seen_colleges.add(notice['college_id'])
+        cursor.execute(
+            'SELECT message, image_path, created_at FROM global_notifications '
+            'WHERE college_id IS NULL '
+            'ORDER BY created_at DESC, id DESC LIMIT 1'
+        )
+        legacy_notice = cursor.fetchone()
         cursor.execute(
             'SELECT message, image_path, created_at FROM global_notifications '
             'ORDER BY created_at DESC, id DESC LIMIT 1'
         )
-        notice = cursor.fetchone()
-        if not notice:
-            return jsonify({'status': 'success', 'notice': None})
+        latest_notice = cursor.fetchone()
         return jsonify({
             'status': 'success',
-            'notice': {
-                'message': notice['message'],
-                'image_path': notice['image_path'],
-                'created_at': str(notice['created_at'])
-            }
+            'notice': None if not latest_notice else {
+                'message': latest_notice['message'],
+                'image_path': latest_notice['image_path'],
+                'created_at': str(latest_notice['created_at'])
+            },
+            'legacy_notice': None if not legacy_notice else {
+                'message': legacy_notice['message'],
+                'image_path': legacy_notice['image_path'],
+                'created_at': str(legacy_notice['created_at'])
+            },
+            'colleges': colleges,
+            'notices': notices if college_id else []
         })
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
         app.logger.exception('Could not load the latest global announcement.')
@@ -593,8 +723,10 @@ def admin_broadcast_message():
     if image_file and image_file.filename:
         safe_original_name = secure_filename(image_file.filename)
         extension = os.path.splitext(safe_original_name)[1].lower()
-        if not safe_original_name or extension not in {'.jpg', '.jpeg', '.png', '.gif', '.webp'}:
-            return jsonify({'status': 'error', 'message': 'Choose a JPG, JPEG, PNG, GIF, or WebP image.'}), 400
+        if not safe_original_name or extension not in {
+            '.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.bmp', '.tif', '.tiff', '.ico'
+        }:
+            return jsonify({'status': 'error', 'message': 'Choose a supported raster image format.'}), 400
         filename = secure_filename(f'{secrets.token_hex(16)}_{safe_original_name}')
         image_path = os.path.join('uploads', 'broadcasts', filename).replace(os.sep, '/')
         saved_image_path = os.path.join(STATIC_DIR, *image_path.split('/'))
@@ -615,8 +747,8 @@ def admin_broadcast_message():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            'INSERT INTO global_notifications (message, image_path) VALUES (%s, %s)',
-            (message, image_path)
+            'INSERT INTO global_notifications (message, image_path, college_id) VALUES (%s, %s, %s)',
+            (message, image_path, session['user_id'])
         )
         conn.commit()
         return jsonify({'status': 'success', 'message': 'Global announcement published.'})
@@ -635,11 +767,19 @@ def admin_broadcast_message():
 def validate_academic_class(cursor, program, part):
     normalized_program = re.sub(r'[^a-z0-9]', '', program.lower())
     cursor.execute(
-        'SELECT program_key, parts FROM academic_programs '
-        "WHERE LOWER(REPLACE(REPLACE(REPLACE(program_key, '-', ''), ' ', ''), '.', '')) = %s",
-        (normalized_program,)
+        'SELECT program_key, display_name, parts FROM academic_programs '
+        'ORDER BY program_key'
     )
-    program_record = cursor.fetchone()
+    program_record = next(
+        (
+            row for row in cursor.fetchall()
+            if normalized_program in {
+                re.sub(r'[^a-z0-9]', '', row['program_key'].lower()),
+                re.sub(r'[^a-z0-9]', '', row['display_name'].lower())
+            }
+        ),
+        None
+    )
     if not program_record:
         return None
     available_parts = program_record['parts'].split(',')
@@ -696,11 +836,57 @@ def welcome():
     current_lang = session.get('lang', 'en')
     translations = LANG_DICT[current_lang]
     next_lang = 'ur' if current_lang == 'en' else 'en'
+    college_notices = []
+    release_logs = []
+    portal_data_error = ''
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT n.id, n.message, n.image_path, n.created_at, a.id AS college_id, '
+            'a.college_name FROM global_notifications n '
+            'JOIN admins a ON a.id = n.college_id '
+            'ORDER BY a.college_name, n.created_at DESC, n.id DESC'
+        )
+        colleges_by_id = {}
+        for row in cursor.fetchall():
+            college = colleges_by_id.setdefault(
+                row['college_id'],
+                {'id': row['college_id'], 'name': row['college_name'], 'notices': []}
+            )
+            college['notices'].append({
+                'message': row['message'],
+                'image_path': row['image_path'],
+                'created_at': str(row['created_at'])
+            })
+        college_notices = list(colleges_by_id.values())
+        cursor.execute(
+            'SELECT title, message, created_at FROM developer_releases '
+            'ORDER BY created_at DESC, id DESC LIMIT 10'
+        )
+        release_logs = [
+            {
+                'title': row['title'],
+                'message': row['message'],
+                'created_at': str(row['created_at'])
+            }
+            for row in cursor.fetchall()
+        ]
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('Could not load welcome portal announcements.')
+        portal_data_error = 'Announcements and release logs are temporarily unavailable.'
+    finally:
+        if conn is not None:
+            conn.close()
     return render_template(
         'welcome.html',
         current_lang=current_lang,
         translations=translations,
-        next_lang=next_lang
+        next_lang=next_lang,
+        college_notices=college_notices,
+        release_logs=release_logs,
+        portal_data_error=portal_data_error
     )
 
 
@@ -953,7 +1139,7 @@ def admin_dashboard():
         elif action == 'add_student':
             roll_no = admin_request_value(request_values, 'roll_no', required=True)
             student_name = admin_request_value(request_values, 'student_name', required=True)
-            father_name = admin_request_value(request_values, 'father_name', required=True)
+            father_name = admin_request_value(request_values, 'father_name').strip()
             phone_number = admin_request_value(request_values, 'phone_number')
             program = admin_request_value(request_values, 'program', required=True)
             part = admin_request_value(request_values, 'part', required=True)
@@ -964,13 +1150,17 @@ def admin_dashboard():
                     'error', 400,
                     message='Select a valid program and part/semester.'
                 )
-            cursor.execute(
-                'INSERT INTO students (roll_no, student_name, father_name, phone_number, program, part, college_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                (
-                    roll_no, student_name, father_name, phone_number,
-                    academic_class['program_key'], academic_class['part'], college_id
-                )
+            insert_student_record(
+                cursor,
+                {
+                    'roll_no': roll_no.strip(),
+                    'student_name': student_name.strip(),
+                    'father_name': father_name,
+                    'phone_number': phone_number.strip(),
+                    'program': academic_class['program_key'],
+                    'part': academic_class['part'],
+                    'college_id': college_id
+                }
             )
             conn.commit()
         elif action == 'edit_teacher_admin':
@@ -1184,7 +1374,7 @@ def import_students():
             if not isinstance(value, str):
                 return jsonify({"error": f"Row {row_number}: {field} must be text."}), 400
             fields[field] = value.strip()
-        if not all(fields[field] for field in ('roll_no', 'student_name', 'father_name', 'program', 'part')):
+        if not all(fields[field] for field in ('roll_no', 'student_name', 'program', 'part')):
             return jsonify({"error": f"Row {row_number} is missing a required value."}), 400
         clean_rows.append(fields)
 
@@ -1208,15 +1398,18 @@ def import_students():
                         "that is not in the academic class catalog."
                     )
                 }), 400
-            cursor.execute(
-                'INSERT INTO students '
-                '(roll_no, student_name, father_name, phone_number, program, part, college_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s) '
-                'ON CONFLICT (roll_no, college_id) DO NOTHING',
-                (row['roll_no'], row['student_name'], row['father_name'], row['phone_number'],
-                 academic_class['program_key'], academic_class['part'], session['user_id'])
+            imported += insert_student_record(
+                cursor,
+                {
+                    'roll_no': row['roll_no'],
+                    'student_name': row['student_name'],
+                    'father_name': row['father_name'],
+                    'phone_number': row['phone_number'],
+                    'program': academic_class['program_key'],
+                    'part': academic_class['part'],
+                    'college_id': session['user_id']
+                }
             )
-            imported += cursor.rowcount
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1225,6 +1418,126 @@ def import_students():
         conn.close()
 
     return sync_json_response(imported=imported, skipped=len(clean_rows) - imported)
+
+
+@app.route('/admin/upload_student_sheet', methods=['POST'])
+def upload_student_sheet():
+    if session.get('role') != 'admin' or not session.get('user_id'):
+        return jsonify({'status': 'error', 'message': 'Admin login is required.'}), 401
+    if not offline_sync_actor_matches('admin', session.get('user_id')):
+        return jsonify({'status': 'error', 'message': 'This admin session is no longer valid.'}), 403
+
+    image_file = request.files.get('student_sheet')
+    if image_file is None or not image_file.filename:
+        return jsonify({'status': 'error', 'message': 'Choose a class-list image to upload.'}), 400
+    mime_type = (image_file.mimetype or '').lower()
+    if mime_type not in {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}:
+        return jsonify({'status': 'error', 'message': 'Upload a JPEG, PNG, WebP, or GIF image.'}), 400
+    image_bytes = image_file.stream.read(15 * 1024 * 1024 + 1)
+    if not image_bytes:
+        return jsonify({'status': 'error', 'message': 'The uploaded image is empty.'}), 400
+    if len(image_bytes) > 15 * 1024 * 1024:
+        return jsonify({'status': 'error', 'message': 'Images must be 15 MB or smaller.'}), 413
+
+    api_key = os.environ.get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return jsonify({'status': 'error', 'message': 'Gemini Vision is not configured on this server.'}), 503
+
+    prompt = (
+        'Read this complete class roster image, including annotations near every top and bottom '
+        'edge, margin, or footer. Return only a JSON object with string fields "program" and '
+        '"part", plus "students", an array of objects with string fields "roll_no" and '
+        '"student_name". Infer the class/program (examples: D.Com, ICS) and part/semester '
+        '(examples: Part-1, Semester-2) from any header, footer, or boundary annotation. '
+        'Preserve roll-number characters and each student name as printed. Exclude column '
+        'headers, totals, and non-student rows. Do not include father names or contact numbers. '
+        'Use empty strings when the program or part cannot be confidently read.'
+    )
+    try:
+        client = genai.Client(api_key=api_key)
+        completion = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                prompt,
+                genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            ],
+            config={'response_mime_type': 'application/json'}
+        )
+        parsed = json.loads(completion.text)
+        if not isinstance(parsed, dict) or not isinstance(parsed.get('students'), list):
+            raise ValueError('Gemini returned an invalid class roster shape.')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        app.logger.exception('Gemini returned an invalid student-sheet extraction.')
+        return jsonify({'status': 'error', 'message': 'The class sheet could not be read. Use a clearer image or manual import.'}), 502
+    except Exception:
+        app.logger.exception('Gemini student-sheet extraction failed.')
+        return jsonify({'status': 'error', 'message': 'Gemini Vision is temporarily unavailable.'}), 502
+
+    program = parsed.get('program', '')
+    part = parsed.get('part', '')
+    if not isinstance(program, str) or not isinstance(part, str):
+        return jsonify({'status': 'error', 'message': 'The class or part/semester could not be read from the image.'}), 422
+    program = program.strip() or request.form.get('program', '').strip()
+    part = part.strip() or request.form.get('part', '').strip()
+    if not program or not part:
+        return jsonify({
+            'status': 'error',
+            'message': 'The image did not identify a supported program and part/semester. Select them on the form and retry.'
+        }), 422
+
+    clean_students = []
+    for item in parsed['students']:
+        if not isinstance(item, dict):
+            continue
+        roll_no = item.get('roll_no')
+        student_name = item.get('student_name')
+        if isinstance(roll_no, str) and isinstance(student_name, str):
+            roll_no, student_name = roll_no.strip(), student_name.strip()
+            if roll_no and student_name:
+                clean_students.append((roll_no, student_name))
+    if not clean_students or len(clean_students) > 500:
+        return jsonify({
+            'status': 'error',
+            'message': 'Gemini must identify between 1 and 500 student rows. Use a clearer image or split the sheet.'
+        }), 422
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        academic_class = validate_academic_class(cursor, program, part)
+        if not academic_class:
+            return jsonify({'status': 'error', 'message': 'The detected program or part/semester is not in the class catalog.'}), 422
+        imported = 0
+        for roll_no, student_name in clean_students:
+            imported += insert_student_record(
+                cursor,
+                {
+                    'roll_no': roll_no,
+                    'student_name': student_name,
+                    'father_name': '',
+                    'phone_number': '',
+                    'program': academic_class['program_key'],
+                    'part': academic_class['part'],
+                    'college_id': session['user_id']
+                }
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        app.logger.exception('Could not save extracted student records.')
+        raise
+    finally:
+        conn.close()
+
+    return jsonify({
+        'status': 'success',
+        'program': academic_class['program_key'],
+        'part': academic_class['part'],
+        'parsed': len(clean_students),
+        'imported': imported,
+        'skipped': len(clean_students) - imported
+    })
+
 
 # 4. SUPER DEVELOPER PORTAL
 @app.route('/developer/dashboard', methods=['GET', 'POST'])
@@ -1474,6 +1787,29 @@ def developer_dashboard():
         "<label>New password (leave blank to keep current)<input type='password' name='new_password' autocomplete='new-password'></label>"
         "<button type='submit'>Update Developer Login</button></form></div>"
     )
+    release_csrf = session.setdefault('developer_csrf_token', secrets.token_urlsafe(32))
+    cursor.execute(
+        'SELECT title, message, created_at FROM developer_releases '
+        'ORDER BY created_at DESC, id DESC LIMIT 5'
+    )
+    release_entries = ''.join(
+        "<li><strong>" + safe_value(row['title']) + "</strong> — "
+        + safe_value(row['message']) + "</li>"
+        for row in cursor.fetchall()
+    )
+    developer_release_box = (
+        "<div class='card full-width'><h3>📢 Developer Platform Release Logs</h3>"
+        "<button type='button' class='form-toggle' data-form-toggle aria-expanded='false' "
+        "aria-controls='release-log-panel' data-open-label='+ Publish Platform Release' "
+        "data-close-label='− Close Release Form'>+ Publish Platform Release</button>"
+        "<div id='release-log-panel' class='form-panel' hidden>"
+        "<form method='POST' action='/developer/release_logs' data-no-offline-queue='true'>"
+        f"<input type='hidden' name='csrf_token' value='{safe_value(release_csrf)}'>"
+        "<input type='text' name='title' maxlength='160' placeholder='Release title' required>"
+        "<textarea name='message' maxlength='4096' rows='4' placeholder='Technical changes and deployment notes' required></textarea>"
+        "<button type='submit'>Publish Release Log</button></form></div>"
+        "<ul>" + (release_entries or "<li>No platform releases have been published.</li>") + "</ul></div>"
+    )
     conn.close()
     dashboard_html = """
     <html>
@@ -1506,7 +1842,7 @@ def developer_dashboard():
                 <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
                 <a href="/logout" style="color: white; font-weight: bold; text-decoration: none; background: rgba(0,0,0,0.2); padding: 8px 15px; border-radius: 5px;">Log Out ➡️</a>
             </div>
-            """ + edit_box + developer_profile_box + """
+            """ + edit_box + developer_profile_box + developer_release_box + """
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>
@@ -1589,6 +1925,42 @@ def developer_dashboard():
         'data-offline-actor="developer:Cukur"',
         f'data-offline-actor="developer:{safe_value(session.get("user"))}"'
     )
+
+
+@app.route('/developer/release_logs', methods=['POST'])
+def publish_developer_release():
+    if session.get('role') != 'developer':
+        return sync_json_response('error', 401, message='Developer login is required.')
+    supplied_token = request.form.get('csrf_token', '')
+    expected_token = session.get('developer_csrf_token', '')
+    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
+        return sync_json_response('error', 403, message='The security token is invalid. Reload the dashboard and try again.')
+    title = request.form.get('title', '').strip()
+    message = request.form.get('message', '').strip()
+    if not title or not message:
+        return sync_json_response('error', 400, message='A release title and deployment notes are required.')
+    if len(title) > 160 or len(message) > 4096:
+        return sync_json_response('error', 400, message='Release titles are limited to 160 characters and notes to 4,096 characters.')
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO developer_releases (title, message) VALUES (%s, %s)',
+            (title, message)
+        )
+        conn.commit()
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        if conn is not None:
+            conn.rollback()
+        app.logger.exception('Could not publish the developer release log.')
+        return sync_json_response('error', 503, message='The platform release could not be saved.')
+    finally:
+        if conn is not None:
+            conn.close()
+    return redirect(url_for('developer_dashboard'))
+
+
 # Create college through a dedicated endpoint so Vercel routes the POST explicitly.
 @app.route('/developer/create_college', methods=['POST'])
 def developer_create_college():

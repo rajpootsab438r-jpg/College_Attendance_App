@@ -71,11 +71,6 @@ def setup_database():
                     )
                 conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(teacher_id, college_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(roll_no, college_id))")
-                student_columns = {
-                    row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()
-                }
-                if 'section' in student_columns:
-                    conn.execute("ALTER TABLE students DROP COLUMN section")
                 for table_name in ('teachers', 'students'):
                     columns = {
                         row[1] for row in
@@ -90,14 +85,23 @@ def setup_database():
                 if 'client_timestamp' not in attendance_columns:
                     conn.execute("ALTER TABLE attendance ADD COLUMN client_timestamp TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_operations (operation_id TEXT PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                conn.execute("CREATE TABLE IF NOT EXISTS global_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, image_path TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                conn.execute("DROP TABLE IF EXISTS academic_class_options")
-                conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL)")
-                program_columns = {
-                    row[1] for row in conn.execute("PRAGMA table_info(academic_programs)").fetchall()
+                conn.execute("CREATE TABLE IF NOT EXISTS global_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, image_path TEXT, college_id INTEGER REFERENCES admins(id) ON DELETE SET NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                notice_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(global_notifications)").fetchall()
                 }
-                if 'sections' in program_columns:
-                    conn.execute("ALTER TABLE academic_programs DROP COLUMN sections")
+                if 'college_id' not in notice_columns:
+                    conn.execute(
+                        "ALTER TABLE global_notifications ADD COLUMN college_id INTEGER REFERENCES admins(id) ON DELETE SET NULL"
+                    )
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS developer_releases (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL)")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
                     conn.execute(
                         "INSERT INTO academic_programs (program_key, display_name, level, parts) "
@@ -171,7 +175,6 @@ def setup_database():
                 )
                 """)
                 cursor.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_image TEXT")
-                cursor.execute("ALTER TABLE students DROP COLUMN IF EXISTS section")
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS attendance (
                     id SERIAL PRIMARY KEY,
@@ -198,10 +201,22 @@ def setup_database():
                     id SERIAL PRIMARY KEY,
                     message TEXT NOT NULL,
                     image_path TEXT,
+                    college_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
-                cursor.execute("DROP TABLE IF EXISTS academic_class_options")
+                cursor.execute(
+                    "ALTER TABLE global_notifications ADD COLUMN IF NOT EXISTS "
+                    "college_id INTEGER REFERENCES admins(id) ON DELETE SET NULL"
+                )
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS developer_releases (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS academic_programs (
                     program_key TEXT PRIMARY KEY,
@@ -210,7 +225,6 @@ def setup_database():
                     parts TEXT NOT NULL
                 )
                 """)
-                cursor.execute("ALTER TABLE academic_programs DROP COLUMN IF EXISTS sections")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
                     cursor.execute(
                         "INSERT INTO academic_programs (program_key, display_name, level, parts) "

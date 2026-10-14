@@ -328,8 +328,8 @@
                 <label for="broadcast-announcement">Announcement for parents (up to 4,096 characters)</label>
                 <textarea id="broadcast-announcement" name="announcement" rows="5" maxlength="4096"
                     style="width:100%;box-sizing:border-box;padding:12px;" required></textarea>
-                <label for="broadcast-image">Optional announcement image (JPG, JPEG, PNG, GIF, or WebP; no application size limit)</label>
-                <input id="broadcast-image" type="file" name="broadcast_image" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">
+                <label for="broadcast-image">Optional announcement image (JPG, PNG, GIF, WebP, AVIF, BMP, TIFF, or ICO; no application size limit)</label>
+                <input id="broadcast-image" type="file" name="broadcast_image" accept=".jpg,.jpeg,.png,.gif,.webp,.avif,.bmp,.tif,.tiff,.ico,image/*">
                 <button type="submit" id="broadcast-submit">Publish Global Announcement</button>
                 <p id="broadcast-status" role="status" aria-live="polite"></p>
             </form>
@@ -391,7 +391,7 @@
                 <input type="hidden" name="action" value="add_student">
                 <input type="text" name="roll_no" placeholder="{% if current_lang == 'ur' %}رول نمبر{% else %}Roll Number{% endif %}" autocomplete="off" required>
                 <input type="text" name="student_name" placeholder="{% if current_lang == 'ur' %}طالب علم کا نام{% else %}Student Name{% endif %}" autocomplete="off" required>
-                <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام{% else %}Father Name{% endif %}" autocomplete="off" required>
+                <input type="text" name="father_name" placeholder="{% if current_lang == 'ur' %}والد کا نام (اختیاری){% else %}Father Name (Optional){% endif %}" autocomplete="off">
                 <input type="text" name="phone_number" placeholder="{% if current_lang == 'ur' %}گھر کا فون نمبر (اختیاری){% else %}Phone Number (Optional){% endif %}" autocomplete="off">
                 <select id="student-program" name="program" data-academic-program required>
                     <option value="">-- Select Program --</option>
@@ -409,7 +409,7 @@
         <h3>📷 Scan / Import Student List</h3>
         <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="scan-student-form" data-open-label="+ Scan / Import Students" data-close-label="− Cancel">+ Scan / Import Students</button>
         <div id="scan-student-form" class="form-panel" hidden>
-            <p>Choose or photograph a clear list. OCR runs in this browser; check and correct the recognized rows before importing.</p>
+            <p>Upload a clear roster image for Gemini Vision to detect the program, part/semester, roll numbers, and student names. PDF files can still be OCR-scanned in this browser.</p>
             <label for="student-scan-image">PDF or scanned image</label>
             <input id="student-scan-image" type="file" accept="application/pdf, image/*" capture="environment">
             <div style="display:flex;gap:12px;flex-wrap:wrap;">
@@ -420,9 +420,9 @@
                     <option value="">-- Select Part / Semester --</option>
                 </select>
             </div>
-            <button id="scan-students-button" type="button">Scan image (OCR)</button>
-            <p>Review the text below. Each row must be separated into columns with tabs, |, or at least two spaces: roll number, student name, father name, optional phone number.</p>
-            <textarea id="scan-students-text" rows="10" style="width:100%;box-sizing:border-box;padding:12px;" placeholder="Roll number | Student name | Father name | Phone (optional)"></textarea>
+            <button id="scan-students-button" type="button">Read and import sheet</button>
+            <p>For manual import, separate each row into columns with tabs, |, or at least two spaces: roll number, student name, optional father name, optional phone number.</p>
+            <textarea id="scan-students-text" rows="10" style="width:100%;box-sizing:border-box;padding:12px;" placeholder="Roll number | Student name | Father name (optional) | Phone (optional)"></textarea>
             <button id="import-scanned-students" type="button" class="btn-success">Review and add students</button>
             <p id="scan-status" role="status" aria-live="polite"></p>
         </div>
@@ -898,16 +898,40 @@
       return;
     }
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    if (!window.Tesseract || (isPdf && !window.pdfjsLib)) {
+    if (file.size > 15 * 1024 * 1024) {
+      status.textContent = 'Uploads must be 15 MB or smaller.';
+      return;
+    }
+    if (isPdf && (!window.Tesseract || !window.pdfjsLib)) {
       status.textContent = 'The PDF or OCR library could not load. Check your connection, then retry; you can also paste tab-separated text below.';
       return;
     }
-    if (isPdf && file.size > 20 * 1024 * 1024) {
-      status.textContent = 'PDF files must be 20 MB or smaller.';
+    this.disabled = true;
+    if (!isPdf) {
+      status.textContent = 'Uploading the original image to Gemini Vision for roster extraction...';
+      try {
+        const upload = new FormData();
+        upload.append('student_sheet', file);
+        upload.append('program', document.getElementById('scan-program').value);
+        upload.append('part', document.getElementById('scan-part').value);
+        const response = await fetch('/admin/upload_student_sheet', {
+          method: 'POST',
+          body: upload,
+          credentials: 'same-origin',
+          headers: {'Accept': 'application/json'}
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || 'The sheet could not be imported.');
+        status.textContent = `${result.imported} students saved for ${result.program} ${result.part}; ${result.skipped} duplicate rows skipped.`;
+        window.location.href = '/admin/dashboard';
+      } catch (error) {
+        status.textContent = 'Image import failed: ' + (error instanceof Error ? error.message : 'Please retry.');
+      } finally {
+        this.disabled = false;
+      }
       return;
     }
-    this.disabled = true;
-    status.textContent = 'Reading image. Large pages may take a little while...';
+    status.textContent = 'Reading PDF pages. Large documents may take a little while...';
     let worker;
     try {
       worker = await Tesseract.createWorker('eng');
@@ -959,14 +983,14 @@
     const rows = [];
     for (let index = 0; index < lines.length; index++) {
       const columns = lines[index].split(/\t+|\s{2,}|\s*\|\s*/).map(value => value.trim()).filter(Boolean);
-      if (columns.length < 3 || columns.length > 4) {
-        status.textContent = 'Could not read row ' + (index + 1) + '. Use: roll number | student name | father name | optional phone. Fix the text and retry.';
+      if (columns.length < 2 || columns.length > 4) {
+        status.textContent = 'Could not read row ' + (index + 1) + '. Use: roll number | student name | optional father name | optional phone. Fix the text and retry.';
         return;
       }
       rows.push({
         roll_no: columns[0],
         student_name: columns[1],
-        father_name: columns[2],
+        father_name: columns[2] || '',
         phone_number: columns[3] || '',
         program: program,
         part: part

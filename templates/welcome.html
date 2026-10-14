@@ -27,8 +27,20 @@
         .notice-content { padding: 18px 22px; }
         .notice-kicker { margin: 0 0 6px; color: #b91c1c; font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
         .notice-message { margin: 0; color: #374151; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .notice-image { display: block; width: 100%; max-height: 280px; object-fit: contain; background: #f8fafc; }
+        .notice-image { display: block; width: 100%; max-height: min(60vh, 520px); object-fit: contain; background: #f8fafc; }
         .notice-loading { color: var(--muted); font-size: 13px; }
+        .college-notice-card { border-top: 1px solid #fee2e2; padding-top: 12px; margin-top: 12px; }
+        .college-notice-name { width: 100%; border: 0; border-radius: 9px; padding: 12px 14px; background: #fff; color: #7f1d1d; text-align: left; font: inherit; font-weight: 750; cursor: pointer; }
+        .college-notice-name:hover, .college-notice-name[aria-expanded="true"] { background: #fff1f2; }
+        .college-notice-panel[hidden] { display: none; }
+        .college-notice-entry { border-top: 1px solid #fee2e2; margin-top: 10px; padding: 12px 4px 0; }
+        .release-board { width: min(100%, 920px); padding: 20px 22px; border: 1px solid #bfdbfe; border-radius: 14px; background: linear-gradient(120deg, #eff6ff, #fff); box-shadow: 0 12px 32px #1e3a8a12; }
+        .release-board h2 { margin: 0 0 14px; color: #1e3a8a; font-size: 18px; }
+        .release-entry { border-top: 1px solid #dbeafe; padding: 12px 0; }
+        .release-entry:first-child { border-top: 0; }
+        .release-entry h3 { margin: 0 0 5px; color: #1e40af; font-size: 15px; }
+        .release-entry p { margin: 0; color: #334155; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+        .release-date { display: block; margin-top: 6px; color: #64748b; font-size: 12px; }
         @keyframes notice-enter { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
         .chat-launcher { position: fixed; right: 22px; bottom: 22px; z-index: 20; border: 0; border-radius: 999px; padding: 15px 20px; background: linear-gradient(120deg, #2563eb, #7c3aed); color: #fff; box-shadow: 0 10px 28px #312e8170; font-size: 15px; font-weight: 750; cursor: pointer; animation: launcher-pulse 2.4s ease-in-out infinite; }
         .chat-launcher:hover { filter: brightness(1.08); }
@@ -53,6 +65,12 @@
         .chat-input { flex: 1; min-width: 0; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font: inherit; }
         .chat-send { border: 0; border-radius: 10px; padding: 0 15px; background: #4f46e5; color: #fff; font-weight: 700; cursor: pointer; }
         .chat-send:disabled { opacity: .6; cursor: wait; }
+        .chat-options { display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 100%; }
+        .chat-option { border: 1px solid #c7d2fe; border-radius: 10px; padding: 10px 12px; background: #fff; color: #312e81; text-align: left; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+        .chat-option:hover { background: #eef2ff; }
+        .chat-roll-form { display: flex; gap: 8px; width: 100%; }
+        .chat-roll-form input { flex: 1; min-width: 0; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font: inherit; }
+        .chat-roll-form button { border: 0; border-radius: 10px; padding: 0 14px; background: #4f46e5; color: #fff; font-weight: 700; cursor: pointer; }
         @media (max-width: 520px) {
             body { padding: 78px 14px 104px; justify-content: flex-start; }
             .lang-switcher-bar { top: 14px; inset-inline-end: 14px; }
@@ -72,13 +90,36 @@
     </div>
 
     <main class="portal-main">
-        <section id="global-notice" class="notice-banner" aria-live="polite" hidden>
+        {% if portal_data_error %}
+        <p class="notice-loading" role="status">{{ portal_data_error }}</p>
+        {% endif %}
+        <section id="global-notice" class="notice-banner" aria-live="polite">
             <div class="notice-content">
-                <p class="notice-kicker">🚨 Emergency Notice</p>
-                <p id="global-notice-message" class="notice-message"></p>
+                <p class="notice-kicker">College Announcements</p>
+                <p id="global-notice-loading" class="notice-loading" role="status">Checking for current announcements…</p>
+                <div id="college-notice-list">
+                    {% for college in college_notices %}
+                    <article class="college-notice-card">
+                        <button class="college-notice-name" type="button" data-college-id="{{ college.id }}" aria-expanded="false">
+                            {{ college.name }}
+                        </button>
+                        <div class="college-notice-panel" hidden>
+                            {% for notice in college.notices %}
+                            <article class="college-notice-entry">
+                                <p class="notice-message">{{ notice.message }}</p>
+                                {% if notice.image_path %}
+                                <img class="notice-image" src="{{ url_for('static', filename=notice.image_path) }}" alt="Image attached to {{ college.name }} announcement" loading="lazy">
+                                {% endif %}
+                            </article>
+                            {% endfor %}
+                        </div>
+                    </article>
+                    {% else %}
+                    <p id="no-college-notices" class="notice-loading">No college announcements are currently available.</p>
+                    {% endfor %}
+                </div>
             </div>
         </section>
-        <p id="global-notice-loading" class="notice-loading" role="status">Checking for current announcements…</p>
 
         <section class="container" aria-label="College attendance portal">
             <h1>{{ translations.title }}</h1>
@@ -88,6 +129,19 @@
             <a href="/login/developer" class="portal-link btn-dev">{{ translations.dev_btn }}</a>
             <div class="support">{{ translations.support }}: 03426600749</div>
             <div class="brand">Çukur</div>
+        </section>
+
+        <section class="release-board" aria-labelledby="release-board-heading">
+            <h2 id="release-board-heading">📢 Developer Platform Release Logs</h2>
+            {% for release in release_logs %}
+            <article class="release-entry">
+                <h3>{{ release.title }}</h3>
+                <p>{{ release.message }}</p>
+                <time class="release-date">{{ release.created_at }}</time>
+            </article>
+            {% else %}
+            <p class="notice-loading">No platform release notes have been published yet.</p>
+            {% endfor %}
         </section>
     </main>
 
@@ -99,46 +153,116 @@
         <header class="chat-header">
             <div>
                 <h2 id="chat-heading" class="chat-title">CAS Intelligent AI Assistant</h2>
-                <p class="chat-subtitle">Ask in English or Roman Urdu</p>
+                <p class="chat-subtitle">Choose a college to check attendance</p>
             </div>
             <button id="chat-close" class="chat-close" type="button" aria-label="Close chat">×</button>
         </header>
-        <div id="chat-timeline" class="chat-timeline" role="log" aria-live="polite">
-            <div class="chat-bubble assistant">Assalamu Alaikum! How can I help you today? For an attendance report, share the class name and roll number.</div>
-        </div>
-        <form id="native-chat-form" class="chat-form">
-            <input id="native-chat-input" class="chat-input" type="text" maxlength="2000" autocomplete="off" placeholder="Write your message…" aria-label="Your message" required>
-            <button id="native-chat-send" class="chat-send" type="submit">Send</button>
-        </form>
+        <div id="chat-timeline" class="chat-timeline" role="log" aria-live="polite"></div>
     </section>
 
     <script>
         (function() {
-            const notice = document.getElementById('global-notice');
-            const noticeMessage = document.getElementById('global-notice-message');
+            const noticeList = document.getElementById('college-notice-list');
             const noticeLoading = document.getElementById('global-notice-loading');
-            fetch('/api/global_notice', {credentials: 'same-origin'})
-                .then(async function(response) {
+            function requestJson(url, options) {
+                return fetch(url, options || {credentials: 'same-origin'}).then(async function(response) {
                     const result = await response.json();
-                    if (!response.ok) throw new Error(result.message || 'Could not load announcements.');
+                    if (!response.ok) throw new Error(result.message || 'The request could not be completed.');
                     return result;
-                })
-                .then(function(result) {
-                    noticeLoading.hidden = true;
-                    if (!result.notice) return;
-                    noticeMessage.textContent = result.notice.message;
-                    const imagePath = typeof result.notice.image_path === 'string'
-                        ? result.notice.image_path.trim()
+                });
+            }
+
+            function renderNotice(college, panel) {
+                panel.replaceChildren();
+                if (!college.notices || !college.notices.length) {
+                    const empty = document.createElement('p');
+                    empty.className = 'notice-loading';
+                    empty.textContent = 'No current announcement for this college.';
+                    panel.append(empty);
+                    return;
+                }
+                college.notices.forEach(function(notice) {
+                    const entry = document.createElement('article');
+                    entry.className = 'college-notice-entry';
+                    const message = document.createElement('p');
+                    message.className = 'notice-message';
+                    message.textContent = notice.message || '';
+                    entry.append(message);
+                    const imagePath = typeof notice.image_path === 'string'
+                        ? notice.image_path.trim()
                         : '';
                     if (imagePath) {
-                        const noticeImage = document.createElement('img');
-                        noticeImage.className = 'notice-image';
-                        noticeImage.alt = 'Image attached to the college announcement';
-                        noticeImage.src = '/static/' + imagePath
-                            .split('/').map(encodeURIComponent).join('/');
-                        notice.append(noticeImage);
+                        const image = document.createElement('img');
+                        image.className = 'notice-image';
+                        image.alt = 'Image attached to ' + college.name + ' announcement';
+                        image.loading = 'lazy';
+                        image.src = '/static/' + imagePath.split('/').map(encodeURIComponent).join('/');
+                        entry.append(image);
                     }
-                    notice.hidden = false;
+                    panel.append(entry);
+                });
+            }
+
+            function renderCollegeNoticeButtons(colleges) {
+                noticeList.replaceChildren();
+                colleges.forEach(function(college) {
+                    const card = document.createElement('article');
+                    card.className = 'college-notice-card';
+                    const button = document.createElement('button');
+                    button.className = 'college-notice-name';
+                    button.type = 'button';
+                    button.textContent = college.name;
+                    button.setAttribute('aria-expanded', 'false');
+                    const panel = document.createElement('div');
+                    panel.className = 'college-notice-panel';
+                    panel.hidden = true;
+                    button.addEventListener('click', async function() {
+                        const opening = button.getAttribute('aria-expanded') !== 'true';
+                        document.querySelectorAll('.college-notice-panel').forEach(function(otherPanel) {
+                            otherPanel.hidden = true;
+                        });
+                        document.querySelectorAll('.college-notice-name').forEach(function(otherButton) {
+                            otherButton.setAttribute('aria-expanded', 'false');
+                        });
+                        if (!opening) return;
+                        button.setAttribute('aria-expanded', 'true');
+                        panel.hidden = false;
+                        panel.textContent = 'Loading announcements…';
+                        try {
+                            const result = college.system
+                                ? {notices: college.notices}
+                                : await requestJson('/api/global_notice?college_id=' + encodeURIComponent(college.id));
+                            renderNotice({name: college.name, notices: result.notices}, panel);
+                        } catch (error) {
+                            panel.textContent = error instanceof Error
+                                ? error.message
+                                : 'Announcements could not be loaded.';
+                        }
+                    });
+                    card.append(button, panel);
+                    noticeList.append(card);
+                });
+                if (!colleges.length) {
+                    const empty = document.createElement('p');
+                    empty.className = 'notice-loading';
+                    empty.textContent = 'No college announcements are currently available.';
+                    noticeList.append(empty);
+                }
+            }
+
+            requestJson('/api/global_notice')
+                .then(function(result) {
+                    noticeLoading.hidden = true;
+                    const colleges = result.colleges || [];
+                    if (result.legacy_notice) {
+                        colleges.push({
+                            id: '',
+                            name: 'System Announcements',
+                            system: true,
+                            notices: [result.legacy_notice]
+                        });
+                    }
+                    renderCollegeNoticeButtons(colleges);
                 })
                 .catch(function(error) {
                     noticeLoading.textContent = error instanceof Error
@@ -150,10 +274,9 @@
             const frame = document.getElementById('native-chat-frame');
             const backdrop = document.getElementById('chat-backdrop');
             const closeButton = document.getElementById('chat-close');
-            const form = document.getElementById('native-chat-form');
-            const input = document.getElementById('native-chat-input');
-            const sendButton = document.getElementById('native-chat-send');
             const timeline = document.getElementById('chat-timeline');
+            const state = {};
+            let choicesLoaded = false;
 
             function setChatOpen(open) {
                 launcher.setAttribute('aria-expanded', String(open));
@@ -161,7 +284,10 @@
                     backdrop.hidden = false;
                     frame.hidden = false;
                     requestAnimationFrame(function() { frame.classList.add('is-open'); });
-                    input.focus();
+                    if (!choicesLoaded) {
+                        choicesLoaded = true;
+                        showCollegeChoices();
+                    }
                 } else {
                     frame.classList.remove('is-open');
                     window.setTimeout(function() {
@@ -183,42 +309,164 @@
                 return bubble;
             }
 
+            function showChoices(items, onSelect) {
+                const list = document.createElement('div');
+                list.className = 'chat-options';
+                if (!items.length) {
+                    addBubble('There are no active choices for this selection.', 'assistant');
+                    return;
+                }
+                items.forEach(function(item) {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'chat-option';
+                    button.textContent = item.label;
+                    button.addEventListener('click', function() {
+                        button.disabled = true;
+                        addBubble(item.label, 'user');
+                        list.remove();
+                        onSelect(item.value);
+                    });
+                    list.append(button);
+                });
+                timeline.append(list);
+                timeline.scrollTop = timeline.scrollHeight;
+            }
+
+            async function loadTree(params) {
+                const query = new URLSearchParams(params || {});
+                const result = await requestJson('/api/attendance_tree?' + query.toString());
+                return result;
+            }
+
+            async function showCollegeChoices() {
+                try {
+                    const result = await loadTree({});
+                    addBubble('Choose your college or institute.', 'assistant');
+                    showChoices((result.colleges || []).map(function(college) {
+                        return {label: college.name, value: college};
+                    }), function(college) {
+                        state.college_id = college.id;
+                        showStreamChoices();
+                    });
+                } catch (error) {
+                    addBubble(error instanceof Error ? error.message : 'College choices are unavailable.', 'assistant');
+                }
+            }
+
+            async function showStreamChoices() {
+                try {
+                    await loadTree({college_id: state.college_id});
+                    addBubble('Choose a program stream.', 'assistant');
+                    showChoices([
+                        {label: '🏫 Intermediate Programs', value: 'Intermediate'},
+                        {label: '🎓 BS Degrees & Diplomas', value: 'Degrees'}
+                    ], function(stream) {
+                        state.stream = stream;
+                        showClassChoices();
+                    });
+                } catch (error) {
+                    addBubble(error instanceof Error ? error.message : 'Program choices are unavailable.', 'assistant');
+                }
+            }
+
+            async function showClassChoices() {
+                try {
+                    const result = await loadTree({
+                        college_id: state.college_id,
+                        stream: state.stream
+                    });
+                    addBubble('Select an active class.', 'assistant');
+                    showChoices((result.classes || []).map(function(academicClass) {
+                        return {label: academicClass.name, value: academicClass.key};
+                    }), function(program) {
+                        state.program = program;
+                        showPartChoices();
+                    });
+                } catch (error) {
+                    addBubble(error instanceof Error ? error.message : 'Class choices are unavailable.', 'assistant');
+                }
+            }
+
+            async function showPartChoices() {
+                try {
+                    const result = await loadTree({
+                        college_id: state.college_id,
+                        stream: state.stream,
+                        program: state.program
+                    });
+                    addBubble('Select the active part or semester.', 'assistant');
+                    showChoices((result.parts || []).map(function(part) {
+                        return {label: part, value: part};
+                    }), function(part) {
+                        state.part = part;
+                        showRollNumberInput();
+                    });
+                } catch (error) {
+                    addBubble(error instanceof Error ? error.message : 'Part choices are unavailable.', 'assistant');
+                }
+            }
+
+            function showRollNumberInput() {
+                addBubble('Enter the student’s roll number to view their attendance.', 'assistant');
+                const form = document.createElement('form');
+                form.className = 'chat-roll-form';
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.inputMode = 'numeric';
+                input.pattern = '[0-9]+';
+                input.placeholder = "Please enter the student's Roll Number to query";
+                input.setAttribute('aria-label', "Please enter the student's Roll Number to query");
+                input.required = true;
+                const submit = document.createElement('button');
+                submit.type = 'submit';
+                submit.textContent = 'Check';
+                form.append(input, submit);
+                timeline.append(form);
+                input.focus();
+                timeline.scrollTop = timeline.scrollHeight;
+                form.addEventListener('submit', async function(event) {
+                    event.preventDefault();
+                    if (!form.reportValidity()) return;
+                    addBubble(input.value.trim(), 'user');
+                    form.remove();
+                    const loading = addBubble('Preparing the attendance summary…', 'assistant');
+                    try {
+                        const result = await requestJson('/api/native_chat', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+                            body: JSON.stringify({
+                                college_id: state.college_id,
+                                program: state.program,
+                                part: state.part,
+                                roll_no: input.value.trim()
+                            })
+                        });
+                        loading.textContent = result.reply;
+                        const restart = document.createElement('button');
+                        restart.type = 'button';
+                        restart.className = 'chat-option';
+                        restart.textContent = 'Check another student';
+                        restart.addEventListener('click', function() {
+                            timeline.replaceChildren();
+                            Object.keys(state).forEach(function(key) { delete state[key]; });
+                            showCollegeChoices();
+                        });
+                        timeline.append(restart);
+                    } catch (error) {
+                        loading.textContent = error instanceof Error
+                            ? error.message
+                            : 'The attendance query could not be completed.';
+                    }
+                });
+            }
+
             launcher.addEventListener('click', function() {
                 setChatOpen(launcher.getAttribute('aria-expanded') !== 'true');
             });
             closeButton.addEventListener('click', function() { setChatOpen(false); });
             backdrop.addEventListener('click', function() { setChatOpen(false); });
-            form.addEventListener('submit', async function(event) {
-                event.preventDefault();
-                const message = input.value.trim();
-                if (!message || sendButton.disabled) return;
-                addBubble(message, 'user');
-                input.value = '';
-                sendButton.disabled = true;
-                const loading = document.createElement('div');
-                loading.className = 'chat-bubble assistant';
-                loading.setAttribute('aria-label', 'Assistant is responding');
-                loading.innerHTML = '<span>Thinking…</span><div class="chat-loading"></div>';
-                timeline.append(loading);
-                timeline.scrollTop = timeline.scrollHeight;
-                try {
-                    const response = await fetch('/api/native_chat', {
-                        method: 'POST',
-                        credentials: 'same-origin',
-                        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-                        body: JSON.stringify({message: message})
-                    });
-                    const result = await response.json();
-                    if (!response.ok) throw new Error(result.message || 'The assistant could not respond.');
-                    addBubble(result.reply, 'assistant');
-                } catch (error) {
-                    addBubble(error instanceof Error ? error.message : 'The assistant is temporarily unavailable.', 'assistant');
-                } finally {
-                    loading.remove();
-                    sendButton.disabled = false;
-                    input.focus();
-                }
-            });
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && launcher.getAttribute('aria-expanded') === 'true') {
                     setChatOpen(false);
