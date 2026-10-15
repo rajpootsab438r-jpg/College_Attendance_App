@@ -1450,14 +1450,37 @@ def upload_student_sheet():
 
     prompt = (
         'Read this complete class roster image, including annotations near every top and bottom '
-        'edge, margin, or footer. Return only a JSON object with string fields "program" and '
-        '"part", plus "students", an array of objects with string fields "roll_no" and '
+        'edge, margin, or footer. Return only a JSON object with string fields "class_name" and '
+        '"part_semester", plus "students", an array of objects with string fields "roll_number" and '
         '"student_name". Infer the class/program (examples: D.Com, ICS) and part/semester '
         '(examples: Part-1, Semester-2) from any header, footer, or boundary annotation. '
         'Preserve roll-number characters and each student name as printed. Exclude column '
         'headers, totals, and non-student rows. Do not include father names or contact numbers. '
         'Use empty strings when the program or part cannot be confidently read.'
     )
+    generation_config = {
+        'response_mime_type': 'application/json',
+        'response_schema': {
+            'type': 'OBJECT',
+            'properties': {
+                'class_name': {'type': 'STRING'},
+                'part_semester': {'type': 'STRING'},
+                'students': {
+                    'type': 'ARRAY',
+                    'items': {
+                        'type': 'OBJECT',
+                        'properties': {
+                            'roll_number': {'type': 'STRING'},
+                            'student_name': {'type': 'STRING'}
+                        },
+                        'required': ['roll_number', 'student_name']
+                    }
+                }
+            },
+            'required': ['class_name', 'part_semester', 'students']
+        },
+        'max_output_tokens': 8192
+    }
     try:
         client = genai.Client(
             api_key=api_key or None,
@@ -1469,15 +1492,24 @@ def upload_student_sheet():
             completion = client.models.generate_content(
                 model=model_name,
                 contents=[prompt, image_part],
-                config={
-                    'response_mime_type': 'application/json',
-                    'max_output_tokens': 8192
-                }
+                config=generation_config
             )
             result = json.loads(completion.text)
             if not isinstance(result, dict) or not isinstance(result.get('students'), list):
                 raise ValueError('Gemini returned an invalid class roster shape.')
-            return result
+            parsed_students = []
+            for student in result['students']:
+                if not isinstance(student, dict):
+                    raise ValueError('Gemini returned an invalid student row.')
+                parsed_students.append({
+                    'roll_no': student.get('roll_number'),
+                    'student_name': student.get('student_name')
+                })
+            return {
+                'program': result.get('class_name'),
+                'part': result.get('part_semester'),
+                'students': parsed_students
+            }
 
         def is_overload_error(error):
             status = getattr(error, 'status_code', None)
