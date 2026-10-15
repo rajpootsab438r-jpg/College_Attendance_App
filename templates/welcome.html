@@ -229,9 +229,9 @@
                         panel.hidden = false;
                         panel.textContent = 'Loading announcements…';
                         try {
-                            const result = college.system
-                                ? {notices: college.notices}
-                                : await requestJson('/api/global_notice?college_id=' + encodeURIComponent(college.id));
+                            const result = await requestJson(
+                                '/api/global_notice?college_id=' + encodeURIComponent(college.id)
+                            );
                             renderNotice({name: college.name, notices: result.notices}, panel);
                         } catch (error) {
                             panel.textContent = error instanceof Error
@@ -254,14 +254,6 @@
                 .then(function(result) {
                     noticeLoading.hidden = true;
                     const colleges = result.colleges || [];
-                    if (result.legacy_notice) {
-                        colleges.push({
-                            id: '',
-                            name: 'System Announcements',
-                            system: true,
-                            notices: [result.legacy_notice]
-                        });
-                    }
                     renderCollegeNoticeButtons(colleges);
                 })
                 .catch(function(error) {

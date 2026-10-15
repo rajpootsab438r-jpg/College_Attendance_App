@@ -6,10 +6,8 @@ import hmac
 import html
 import re
 import secrets
-import time
 from urllib.parse import urlparse
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
-from google import genai
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import date, datetime, timedelta, timezone
@@ -666,29 +664,8 @@ def latest_global_notice():
                     'name': notice['college_name']
                 })
                 seen_colleges.add(notice['college_id'])
-        cursor.execute(
-            'SELECT message, image_path, created_at FROM global_notifications '
-            'WHERE college_id IS NULL '
-            'ORDER BY created_at DESC, id DESC LIMIT 1'
-        )
-        legacy_notice = cursor.fetchone()
-        cursor.execute(
-            'SELECT message, image_path, created_at FROM global_notifications '
-            'ORDER BY created_at DESC, id DESC LIMIT 1'
-        )
-        latest_notice = cursor.fetchone()
         return jsonify({
             'status': 'success',
-            'notice': None if not latest_notice else {
-                'message': latest_notice['message'],
-                'image_path': latest_notice['image_path'],
-                'created_at': str(latest_notice['created_at'])
-            },
-            'legacy_notice': None if not legacy_notice else {
-                'message': legacy_notice['message'],
-                'image_path': legacy_notice['image_path'],
-                'created_at': str(legacy_notice['created_at'])
-            },
             'colleges': colleges,
             'notices': notices if college_id else []
         })
@@ -698,6 +675,92 @@ def latest_global_notice():
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.route('/admin/delete_notification/<int:notice_id>', methods=['POST', 'DELETE'])
+def delete_notification(notice_id):
+    role = session.get('role')
+    if role == 'admin':
+        college_id = session.get('user_id')
+        if not college_id:
+            return jsonify({'status': 'error', 'message': 'Admin login is required.'}), 401
+        if not offline_sync_actor_matches('admin', college_id):
+            return jsonify({'status': 'error', 'message': 'This admin session is no longer valid.'}), 403
+        expected_token = session.get('admin_csrf_token', '')
+        redirect_endpoint = 'admin_dashboard'
+        owner_clause = ' AND college_id = %s'
+        owner_params = (college_id,)
+    elif role == 'developer':
+        if not offline_sync_actor_matches('developer', session.get('user')):
+            return jsonify({'status': 'error', 'message': 'This developer session is no longer valid.'}), 403
+        expected_token = session.get('developer_csrf_token', '')
+        redirect_endpoint = 'developer_dashboard'
+        owner_clause = ' AND college_id IS NOT NULL'
+        owner_params = ()
+    else:
+        return jsonify({'status': 'error', 'message': 'An admin or developer login is required.'}), 401
+
+    supplied_token = request.headers.get('X-CSRF-Token', '')
+    if request.method == 'POST':
+        supplied_token = supplied_token or request.form.get('csrf_token', '')
+    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
+        return jsonify({
+            'status': 'error',
+            'message': 'The security token is invalid. Reload the page and try again.'
+        }), 403
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT image_path FROM global_notifications WHERE id = %s' + owner_clause,
+            (notice_id,) + owner_params
+        )
+        notice = cursor.fetchone()
+        if not notice:
+            return jsonify({'status': 'error', 'message': 'The announcement was not found.'}), 404
+        cursor.execute(
+            'DELETE FROM global_notifications WHERE id = %s' + owner_clause,
+            (notice_id,) + owner_params
+        )
+        conn.commit()
+        image_path = notice['image_path']
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        if conn is not None:
+            conn.rollback()
+        app.logger.exception('Could not delete global announcement %s.', notice_id)
+        return jsonify({'status': 'error', 'message': 'The announcement could not be deleted.'}), 503
+    finally:
+        if conn is not None:
+            conn.close()
+
+    if image_path:
+        relative_path = str(image_path).replace('\\', '/')
+        path_parts = relative_path.split('/')
+        if relative_path.startswith('/') or any(part in {'', '.', '..'} for part in path_parts):
+            app.logger.error('Refusing to delete announcement %s with an unsafe image path.', notice_id)
+            return jsonify({
+                'status': 'error',
+                'message': 'The announcement was deleted, but its attachment path was unsafe.'
+            }), 500
+        static_root = os.path.realpath(STATIC_DIR)
+        attachment_path = os.path.realpath(os.path.join(STATIC_DIR, *path_parts))
+        try:
+            if os.path.commonpath((static_root, attachment_path)) != static_root:
+                raise ValueError('Announcement attachment path is outside static storage.')
+            if os.path.isfile(attachment_path):
+                os.remove(attachment_path)
+        except (OSError, ValueError):
+            app.logger.exception('Could not remove attachment for deleted announcement %s.', notice_id)
+            return jsonify({
+                'status': 'error',
+                'message': 'The announcement was deleted, but its attachment could not be removed.'
+            }), 500
+
+    if request.method == 'DELETE' or request.accept_mimetypes.best == 'application/json':
+        return jsonify({'status': 'success', 'message': 'Announcement deleted.'})
+    return redirect(url_for(redirect_endpoint))
 
 
 @app.route('/admin/broadcast_message', methods=['POST'])
@@ -1265,7 +1328,14 @@ def admin_dashboard():
     if edit_s_id:
         cursor.execute('SELECT * FROM students WHERE id=%s AND college_id=%s', (edit_s_id, college_id))
         edit_student_data = cursor.fetchone()
-        
+
+    cursor.execute(
+        'SELECT id, message, image_path, created_at FROM global_notifications '
+        'WHERE college_id = %s ORDER BY created_at DESC, id DESC',
+        (college_id,)
+    )
+    global_notifications = [dict(row) for row in cursor.fetchall()]
+
     conn.close()
     return render_template('admin.html', students=students, teachers=teachers, college_name=college_name, 
                            current_user=current_username, selected_program=selected_program, selected_part=selected_part, 
@@ -1273,7 +1343,7 @@ def admin_dashboard():
                            academic_programs=academic_programs,
                            active_academic_programs=active_academic_programs,
                            active_academic_parts=active_academic_parts,
-                           ai_configured=bool(os.environ.get('GEMINI_API_KEY', '').strip()),
+                           global_notifications=global_notifications,
                            csrf_token=csrf_token,
                            edit_teacher=edit_teacher_data, edit_student=edit_student_data)
 
@@ -1419,204 +1489,6 @@ def import_students():
         conn.close()
 
     return sync_json_response(imported=imported, skipped=len(clean_rows) - imported)
-
-
-@app.route('/admin/upload_student_sheet', methods=['POST'])
-def upload_student_sheet():
-    if session.get('role') != 'admin' or not session.get('user_id'):
-        return jsonify({'status': 'error', 'message': 'Admin login is required.'}), 401
-    if not offline_sync_actor_matches('admin', session.get('user_id')):
-        return jsonify({'status': 'error', 'message': 'This admin session is no longer valid.'}), 403
-
-    image_file = request.files.get('student_list_image')
-    if image_file is None or not image_file.filename:
-        return jsonify({'status': 'error', 'message': 'Choose a class-list image to upload.'}), 400
-    mime_type = (image_file.mimetype or '').lower()
-    if mime_type not in {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}:
-        return jsonify({'status': 'error', 'message': 'Upload a JPEG, PNG, WebP, or GIF image.'}), 400
-    image_bytes = image_file.stream.read(15 * 1024 * 1024 + 1)
-    if not image_bytes:
-        return jsonify({'status': 'error', 'message': 'The uploaded image is empty.'}), 400
-    if len(image_bytes) > 15 * 1024 * 1024:
-        return jsonify({'status': 'error', 'message': 'Images must be 15 MB or smaller.'}), 413
-
-    api_key = os.environ.get('GEMINI_API_KEY')
-    model = "gemini-2.5-flash"
-    fallback_model = "gemini-2.5-flash-lite"
-    overload_message = (
-        "Google AI system is processing heavy queues. Please click 'Scan & Import "
-        "Students' again in a few seconds to bypass the overload."
-    )
-
-    prompt = (
-        'Read this complete class roster image, including annotations near every top and bottom '
-        'edge, margin, or footer. Return only a JSON object with string fields "class_name" and '
-        '"part_semester", plus "students", an array of objects with string fields "roll_number" and '
-        '"student_name". Infer the class/program (examples: D.Com, ICS) and part/semester '
-        '(examples: Part-1, Semester-2) from any header, footer, or boundary annotation. '
-        'Preserve roll-number characters and each student name as printed. Exclude column '
-        'headers, totals, and non-student rows. Do not include father names or contact numbers. '
-        'Use empty strings when the program or part cannot be confidently read.'
-    )
-    generation_config = {
-        'response_mime_type': 'application/json',
-        'response_schema': {
-            'type': 'OBJECT',
-            'properties': {
-                'class_name': {'type': 'STRING'},
-                'part_semester': {'type': 'STRING'},
-                'students': {
-                    'type': 'ARRAY',
-                    'items': {
-                        'type': 'OBJECT',
-                        'properties': {
-                            'roll_number': {'type': 'STRING'},
-                            'student_name': {'type': 'STRING'}
-                        },
-                        'required': ['roll_number', 'student_name']
-                    }
-                }
-            },
-            'required': ['class_name', 'part_semester', 'students']
-        },
-        'max_output_tokens': 8192
-    }
-    try:
-        client = genai.Client(
-            api_key=api_key or None,
-            http_options=genai.types.HttpOptions(timeout=15000)
-        )
-        image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-
-        def generate_roster(model_name):
-            completion = client.models.generate_content(
-                model=model_name,
-                contents=[prompt, image_part],
-                config=generation_config
-            )
-            result = json.loads(completion.text)
-            if not isinstance(result, dict) or not isinstance(result.get('students'), list):
-                raise ValueError('Gemini returned an invalid class roster shape.')
-            parsed_students = []
-            for student in result['students']:
-                if not isinstance(student, dict):
-                    raise ValueError('Gemini returned an invalid student row.')
-                parsed_students.append({
-                    'roll_no': student.get('roll_number'),
-                    'student_name': student.get('student_name')
-                })
-            return {
-                'program': result.get('class_name'),
-                'part': result.get('part_semester'),
-                'students': parsed_students
-            }
-
-        def is_overload_error(error):
-            status = getattr(error, 'status_code', None)
-            if status is None:
-                status = getattr(error, 'code', None)
-            message = f'{status or ""} {error}'.lower()
-            return any(
-                marker in message
-                for marker in ('503', '429', 'resource_exhausted', 'too many requests', 'unavailable', 'overloaded')
-            )
-
-        def is_timeout_error(error):
-            message = f'{type(error).__name__} {error}'.lower()
-            return 'timeout' in message or 'timed out' in message
-
-        retry_with_fallback = False
-        for attempt in range(3):
-            try:
-                parsed = generate_roster(model)
-                break
-            except (TypeError, ValueError, json.JSONDecodeError):
-                raise
-            except Exception as error:
-                if is_overload_error(error):
-                    if attempt < 2:
-                        time.sleep(0.5 * (2 ** attempt))
-                        continue
-                    retry_with_fallback = True
-                    break
-                if is_timeout_error(error) and attempt < 2:
-                    time.sleep(0.5 * (2 ** attempt))
-                    continue
-                raise
-
-        if retry_with_fallback:
-            parsed = generate_roster(fallback_model)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        app.logger.exception('Gemini returned an invalid student-sheet extraction.')
-        return jsonify({'status': 'error', 'message': 'The class sheet could not be read. Use a clearer image or manual import.'}), 502
-    except Exception:
-        app.logger.exception('Gemini student-sheet extraction failed.')
-        return jsonify({'status': 'error', 'message': overload_message}), 503
-
-    program = parsed.get('program')
-    part = parsed.get('part')
-    if not isinstance(program, str) or not isinstance(part, str):
-        return jsonify({'status': 'error', 'message': 'The class or part/semester could not be read from the image.'}), 422
-    program = program.strip()
-    part = part.strip()
-    if not program or not part:
-        return jsonify({
-            'status': 'error',
-            'message': 'The image did not identify a supported program and part/semester.'
-        }), 422
-
-    clean_students = []
-    for item in parsed['students']:
-        if not isinstance(item, dict):
-            continue
-        roll_no = item.get('roll_no')
-        student_name = item.get('student_name')
-        if isinstance(roll_no, str) and isinstance(student_name, str):
-            roll_no, student_name = roll_no.strip(), student_name.strip()
-            if roll_no and student_name:
-                clean_students.append((roll_no, student_name))
-    if not clean_students or len(clean_students) > 500:
-        return jsonify({
-            'status': 'error',
-            'message': 'Gemini must identify between 1 and 500 student rows. Use a clearer image or split the sheet.'
-        }), 422
-
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        academic_class = validate_academic_class(cursor, program, part)
-        if not academic_class:
-            return jsonify({'status': 'error', 'message': 'The detected program or part/semester is not in the class catalog.'}), 422
-        imported = 0
-        for roll_no, student_name in clean_students:
-            imported += insert_student_record(
-                cursor,
-                {
-                    'roll_no': roll_no,
-                    'student_name': student_name,
-                    'father_name': '',
-                    'phone_number': '',
-                    'program': academic_class['program_key'],
-                    'part': academic_class['part'],
-                    'college_id': session['user_id']
-                }
-            )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        app.logger.exception('Could not save extracted student records.')
-        return jsonify({'status': 'error', 'message': 'The extracted student records could not be saved.'}), 500
-    finally:
-        conn.close()
-
-    return jsonify({
-        'status': 'success',
-        'program': academic_class['program_key'],
-        'part': academic_class['part'],
-        'parsed': len(clean_students),
-        'imported': imported,
-        'skipped': len(clean_students) - imported
-    })
 
 
 # 4. SUPER DEVELOPER PORTAL
@@ -1869,6 +1741,38 @@ def developer_dashboard():
     )
     release_csrf = session.setdefault('developer_csrf_token', secrets.token_urlsafe(32))
     cursor.execute(
+        'SELECT n.id, n.message, n.image_path, n.created_at, a.college_name '
+        'FROM global_notifications n JOIN admins a ON a.id = n.college_id '
+        'ORDER BY a.college_name, n.created_at DESC, n.id DESC'
+    )
+    notification_rows = ''.join(
+        "<tr><td style='border:1px solid #a3cfbb;padding:12px;'>"
+        + safe_value(row['college_name'])
+        + "</td><td style='border:1px solid #a3cfbb;padding:12px;white-space:pre-wrap;'>"
+        + safe_value(row['message'])
+        + ("<br><a href='/static/" + safe_value(row['image_path'])
+           + "' target='_blank' rel='noopener'>View attachment</a>"
+           if row['image_path'] else '')
+        + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
+        + safe_value(row['created_at'])
+        + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
+        + "<form method='POST' action='/admin/delete_notification/"
+        + str(int(row['id']))
+        + "' data-no-offline-queue='true' onsubmit='return confirm(\"Delete this notice?\")'>"
+        + "<input type='hidden' name='csrf_token' value='"
+        + safe_value(release_csrf)
+        + "'><button type='submit' style='width:auto;background:#dc2626;color:white;padding:8px 12px;'>"
+        + "❌ Delete Notice</button></form></td></tr>"
+        for row in cursor.fetchall()
+    )
+    developer_notice_box = (
+        "<div class='card full-width'><h3>📣 Institute Announcements</h3>"
+        "<div style='overflow-x:auto'><table><thead><tr><th>Institute</th>"
+        "<th>Notice</th><th>Published</th><th>Action</th></tr></thead><tbody>"
+        + (notification_rows or "<tr><td colspan='4'>No institute announcements have been published.</td></tr>")
+        + "</tbody></table></div></div>"
+    )
+    cursor.execute(
         'SELECT title, message, created_at FROM developer_releases '
         'ORDER BY created_at DESC, id DESC LIMIT 5'
     )
@@ -1922,7 +1826,7 @@ def developer_dashboard():
                 <div style="font-weight: bold; font-size: 14px;">📲 Support/WhatsApp: 03426600749</div>
                 <a href="/logout" style="color: white; font-weight: bold; text-decoration: none; background: rgba(0,0,0,0.2); padding: 8px 15px; border-radius: 5px;">Log Out ➡️</a>
             </div>
-            """ + edit_box + developer_profile_box + developer_release_box + """
+            """ + edit_box + developer_profile_box + developer_release_box + developer_notice_box + """
             <div class="grid">
                 <div class="card">
                     <h3>➕ Add College Account</h3>

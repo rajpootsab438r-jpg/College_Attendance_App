@@ -315,10 +315,6 @@
 </section>
 
 <div class="grid" style="margin-bottom:20px;">
-    <section class="card full-width" aria-live="polite">
-        <h3>🤖 CAS Web AI Assistant</h3>
-        <p>{% if ai_configured %}✅ CAS Web AI Assistant is Configured &amp; Active{% else %}CAS Web AI Assistant is currently unavailable.{% endif %}</p>
-    </section>
     <section class="card full-width">
         <h3>🌐 Global Parent Notifications</h3>
         <button type="button" id="admin-broadcast-toggle" class="form-toggle" aria-expanded="false" aria-controls="admin-broadcast-panel" data-form-toggle data-open-label="📢 Send Mass Broadcast Message" data-close-label="✕ Close Broadcast Settings">📢 Send Mass Broadcast Message</button>
@@ -333,6 +329,26 @@
                 <button type="submit" id="broadcast-submit">Publish Global Announcement</button>
                 <p id="broadcast-status" role="status" aria-live="polite"></p>
             </form>
+        </div>
+        <h4>Previously Published Notices</h4>
+        <div class="notice-management-list">
+            {% for notice in global_notifications %}
+            <article style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-top:1px solid #e2e8f0;">
+                <div style="min-width:0;flex:1;">
+                    <p style="margin:0;white-space:pre-wrap;overflow-wrap:anywhere;">{{ notice.message }}</p>
+                    {% if notice.image_path %}
+                    <a href="{{ url_for('static', filename=notice.image_path) }}" target="_blank" rel="noopener">View attached image</a>
+                    {% endif %}
+                    <small>{{ notice.created_at }}</small>
+                </div>
+                <form method="POST" action="/admin/delete_notification/{{ notice.id }}" data-no-offline-queue="true" onsubmit="return confirm('Delete this notice?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" style="width:auto;background:#dc2626;color:#fff;padding:9px 12px;white-space:nowrap;">❌ Delete Notice</button>
+                </form>
+            </article>
+            {% else %}
+            <p>No announcements have been published yet.</p>
+            {% endfor %}
         </div>
         <a class="btn-success" href="/admin/master_erp_report" style="display:inline-block;margin-top:8px;text-decoration:none;padding:10px 16px;">
             📊 Download Master College ERP Report
@@ -401,20 +417,6 @@
                 </select>
                 <button type="submit">{% if current_lang == 'ur' %}طالب علم شامل کریں{% else %}Add Student{% endif %}</button>
             </form>
-        </div>
-    </div>
-</div>
-<div class="grid" style="margin-top: 20px;">
-    <div class="card full-width">
-        <h3>📷 Scan / Import Student List</h3>
-        <button type="button" class="form-toggle" data-form-toggle aria-expanded="false" aria-controls="scan-student-form" data-open-label="+ Scan / Import Students" data-close-label="− Cancel">+ Scan / Import Students</button>
-        <div id="scan-student-form" class="form-panel" hidden>
-            <p>Upload a clear roster image for Gemini Vision to detect the class, part/semester, roll numbers, and student names.</p>
-            <form id="student-scan-form" action="/admin/upload_student_sheet" method="POST" enctype="multipart/form-data">
-                <input type="file" name="student_list_image" accept="image/*" required>
-                <button type="submit">✨ Scan &amp; Import Students</button>
-            </form>
-            <p id="scan-status" role="status" aria-live="polite"></p>
         </div>
     </div>
 </div>
@@ -870,6 +872,7 @@
         status.textContent = result.message || 'Global announcement published.';
         form.elements.announcement.value = '';
         form.elements.broadcast_image.value = '';
+        window.location.reload();
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : 'Broadcast failed.';
       } finally {
@@ -879,39 +882,6 @@
   })();
 </script>
 <script>
-  document.getElementById('student-scan-form').addEventListener('submit', async function(event) {
-    event.preventDefault();
-    const status = document.getElementById('scan-status');
-    const file = this.elements.student_list_image.files[0];
-    const button = this.querySelector('button[type="submit"]');
-    if (!file) {
-      status.textContent = 'Choose a clear roster image first.';
-      return;
-    }
-    if (file.size > 15 * 1024 * 1024) {
-      status.textContent = 'Uploads must be 15 MB or smaller.';
-      return;
-    }
-    button.disabled = true;
-    status.textContent = 'Uploading the roster image to Gemini Vision for extraction...';
-    try {
-      const response = await fetch(this.action, {
-        method: 'POST',
-        body: new FormData(this),
-        credentials: 'same-origin',
-        headers: {'Accept': 'application/json'}
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || `The sheet could not be imported (HTTP ${response.status}).`);
-      status.textContent = `${result.imported} students saved for ${result.program} ${result.part}; ${result.skipped} duplicate rows skipped.`;
-      window.location.href = '/admin/dashboard';
-    } catch (error) {
-      status.textContent = 'Image import failed: ' + (error instanceof Error ? error.message : 'Please retry.');
-    } finally {
-      button.disabled = false;
-    }
-  });
-
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js')
