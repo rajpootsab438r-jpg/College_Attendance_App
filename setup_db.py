@@ -98,9 +98,16 @@ def setup_database():
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         title TEXT NOT NULL,
                         message TEXT NOT NULL,
+                        image_data TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+                release_columns = {
+                    row[1] for row in
+                    conn.execute("PRAGMA table_info(developer_releases)").fetchall()
+                }
+                if 'image_data' not in release_columns:
+                    conn.execute("ALTER TABLE developer_releases ADD COLUMN image_data TEXT")
                 conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL)")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
                     conn.execute(
@@ -217,9 +224,13 @@ def setup_database():
                     id SERIAL PRIMARY KEY,
                     title TEXT NOT NULL,
                     message TEXT NOT NULL,
+                    image_data TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+                cursor.execute(
+                    "ALTER TABLE developer_releases ADD COLUMN IF NOT EXISTS image_data TEXT"
+                )
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS academic_programs (
                     program_key TEXT PRIMARY KEY,

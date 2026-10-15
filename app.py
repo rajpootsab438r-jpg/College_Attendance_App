@@ -1763,7 +1763,7 @@ def developer_dashboard():
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
         + safe_value(row['created_at'])
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
-        + "<form method='POST' action='/admin/delete_notification/"
+        + "<form method='POST' action='/developer/delete_announcement/"
         + str(int(row['id']))
         + "' data-no-offline-queue='true' onsubmit='return confirm(\"Delete this notice?\")'>"
         + "<input type='hidden' name='csrf_token' value='"
@@ -1780,12 +1780,30 @@ def developer_dashboard():
         + "</tbody></table></div></div>"
     )
     cursor.execute(
-        'SELECT title, message, created_at FROM developer_releases '
+        'SELECT id, title, message, image_data, created_at FROM developer_releases '
         'ORDER BY created_at DESC, id DESC LIMIT 5'
     )
     release_entries = ''.join(
-        "<li><strong>" + safe_value(row['title']) + "</strong> — "
-        + safe_value(row['message']) + "</li>"
+        "<tr><td style='border:1px solid #a3cfbb;padding:12px;'>"
+        + safe_value(row['title'])
+        + "<p style='white-space:pre-wrap;overflow-wrap:anywhere;'>"
+        + safe_value(row['message'])
+        + "</p>"
+        + (
+            "<img src='" + safe_value(row['image_data'])
+            + "' alt='Release attachment' style='display:block;max-width:220px;max-height:160px;object-fit:contain;'>"
+            if row['image_data'] else ''
+        )
+        + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
+        + safe_value(row['created_at'])
+        + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
+        + "<form method='POST' action='/developer/delete_log/"
+        + str(int(row['id']))
+        + "' data-no-offline-queue='true' onsubmit='return confirm(\"Delete this release log?\")'>"
+        + "<input type='hidden' name='csrf_token' value='"
+        + safe_value(release_csrf)
+        + "'><button type='submit' style='width:auto;background:#dc2626;color:white;padding:8px 12px;'>"
+        + "❌ Delete Log</button></form></td></tr>"
         for row in cursor.fetchall()
     )
     developer_release_box = (
@@ -1794,12 +1812,16 @@ def developer_dashboard():
         "aria-controls='release-log-panel' data-open-label='+ Publish Platform Release' "
         "data-close-label='− Close Release Form'>+ Publish Platform Release</button>"
         "<div id='release-log-panel' class='form-panel' hidden>"
-        "<form method='POST' action='/developer/release_logs' data-no-offline-queue='true'>"
+        "<form method='POST' action='/developer/release_logs' enctype='multipart/form-data' data-no-offline-queue='true'>"
         f"<input type='hidden' name='csrf_token' value='{safe_value(release_csrf)}'>"
         "<input type='text' name='title' maxlength='160' placeholder='Release title' required>"
         "<textarea name='message' maxlength='4096' rows='4' placeholder='Technical changes and deployment notes' required></textarea>"
+        "<input type='file' name='release_image' accept='image/*' class='form-control mt-2'>"
         "<button type='submit'>Publish Release Log</button></form></div>"
-        "<ul>" + (release_entries or "<li>No platform releases have been published.</li>") + "</ul></div>"
+        "<div style='overflow-x:auto;margin-top:16px;'><table><thead><tr>"
+        "<th>Release</th><th>Published</th><th>Action</th></tr></thead><tbody>"
+        + (release_entries or "<tr><td colspan='3'>No platform releases have been published.</td></tr>")
+        + "</tbody></table></div></div>"
     )
     conn.close()
     dashboard_html = """
@@ -1922,6 +1944,8 @@ def developer_dashboard():
 def publish_developer_release():
     if session.get('role') != 'developer':
         return sync_json_response('error', 401, message='Developer login is required.')
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='This developer session is no longer valid.')
     supplied_token = request.form.get('csrf_token', '')
     expected_token = session.get('developer_csrf_token', '')
     if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
@@ -1932,13 +1956,50 @@ def publish_developer_release():
         return sync_json_response('error', 400, message='A release title and deployment notes are required.')
     if len(title) > 160 or len(message) > 4096:
         return sync_json_response('error', 400, message='Release titles are limited to 160 characters and notes to 4,096 characters.')
+
+    release_image = request.files.get('release_image')
+    image_data = None
+    if release_image and release_image.filename:
+        safe_filename = secure_filename(release_image.filename)
+        extension = os.path.splitext(safe_filename)[1].lower()
+        content_type = (release_image.content_type or '').lower().split(';', 1)[0].strip()
+        allowed_image_types = {
+            'image/jpeg': {'.jpg', '.jpeg'},
+            'image/png': {'.png'},
+            'image/gif': {'.gif'},
+            'image/webp': {'.webp'},
+            'image/avif': {'.avif'},
+            'image/bmp': {'.bmp'},
+            'image/tiff': {'.tif', '.tiff'},
+            'image/x-icon': {'.ico'},
+            'image/vnd.microsoft.icon': {'.ico'}
+        }
+        if not safe_filename or extension not in allowed_image_types.get(content_type, set()):
+            return sync_json_response(
+                'error', 400,
+                message='Choose a supported raster image format for the release attachment.'
+            )
+        try:
+            image_bytes = release_image.read(5 * 1024 * 1024 + 1)
+        except OSError:
+            app.logger.exception('Could not read the developer release image.')
+            return sync_json_response('error', 400, message='The release image could not be read.')
+        if not image_bytes:
+            return sync_json_response('error', 400, message='The uploaded release image is empty.')
+        if len(image_bytes) > 5 * 1024 * 1024:
+            return sync_json_response('error', 413, message='Release images must be 5 MB or smaller.')
+        image_data = (
+            f'data:{content_type};base64,'
+            f'{base64.b64encode(image_bytes).decode("utf-8")}'
+        )
+
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            'INSERT INTO developer_releases (title, message) VALUES (%s, %s)',
-            (title, message)
+            'INSERT INTO developer_releases (title, message, image_data) VALUES (%s, %s, %s)',
+            (title, message, image_data)
         )
         conn.commit()
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
@@ -1950,6 +2011,48 @@ def publish_developer_release():
         if conn is not None:
             conn.close()
     return redirect(url_for('developer_dashboard'))
+
+
+@app.route('/developer/delete_log/<int:log_id>', methods=['POST'])
+def developer_delete_log(log_id):
+    if session.get('role') != 'developer':
+        return sync_json_response('error', 401, message='Developer login is required.')
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='This developer session is no longer valid.')
+    supplied_token = request.form.get('csrf_token', '')
+    expected_token = session.get('developer_csrf_token', '')
+    if not expected_token or not hmac.compare_digest(supplied_token, expected_token):
+        return sync_json_response(
+            'error', 403,
+            message='The security token is invalid. Reload the dashboard and try again.'
+        )
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM developer_releases WHERE id = %s', (log_id,))
+        if cursor.rowcount == 0:
+            return sync_json_response('error', 404, message='The release log was not found.')
+        conn.commit()
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        if conn is not None:
+            conn.rollback()
+        app.logger.exception('Could not delete developer release log %s.', log_id)
+        return sync_json_response('error', 503, message='The release log could not be deleted.')
+    finally:
+        if conn is not None:
+            conn.close()
+    return redirect(url_for('developer_dashboard'))
+
+
+@app.route('/developer/delete_announcement/<int:notice_id>', methods=['POST'])
+def developer_delete_announcement(notice_id):
+    if session.get('role') != 'developer':
+        return sync_json_response('error', 401, message='Developer login is required.')
+    if not offline_sync_actor_matches('developer', session.get('user')):
+        return sync_json_response('error', 403, message='This developer session is no longer valid.')
+    return delete_notification(notice_id)
 
 
 # Create college through a dedicated endpoint so Vercel routes the POST explicitly.
