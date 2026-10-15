@@ -1469,7 +1469,10 @@ def upload_student_sheet():
             completion = client.models.generate_content(
                 model=model_name,
                 contents=[prompt, image_part],
-                config={'response_mime_type': 'application/json'}
+                config={
+                    'response_mime_type': 'application/json',
+                    'max_output_tokens': 8192
+                }
             )
             result = json.loads(completion.text)
             if not isinstance(result, dict) or not isinstance(result.get('students'), list):
