@@ -108,7 +108,7 @@
                             <article class="college-notice-entry">
                                 <p class="notice-message">{{ notice.message }}</p>
                                 {% if notice.image_path %}
-                                <img class="notice-image" src="{{ url_for('static', filename=notice.image_path) }}" alt="Image attached to {{ college.name }} announcement" loading="lazy">
+                                <img class="notice-image" src="{% if notice.image_path.startswith('data:') %}{{ notice.image_path }}{% else %}{{ url_for('static', filename=notice.image_path) }}{% endif %}" alt="Image attached to {{ college.name }} announcement" loading="lazy">
                                 {% endif %}
                             </article>
                             {% endfor %}
@@ -196,7 +196,9 @@
                         image.className = 'notice-image';
                         image.alt = 'Image attached to ' + college.name + ' announcement';
                         image.loading = 'lazy';
-                        image.src = '/static/' + imagePath.split('/').map(encodeURIComponent).join('/');
+                        image.src = imagePath.startsWith('data:')
+                            ? imagePath
+                            : '/static/' + imagePath.split('/').map(encodeURIComponent).join('/');
                         entry.append(image);
                     }
                     panel.append(entry);

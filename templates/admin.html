@@ -337,7 +337,7 @@
                 <div style="min-width:0;flex:1;">
                     <p style="margin:0;white-space:pre-wrap;overflow-wrap:anywhere;">{{ notice.message }}</p>
                     {% if notice.image_path %}
-                    <a href="{{ url_for('static', filename=notice.image_path) }}" target="_blank" rel="noopener">View attached image</a>
+                    <a href="{% if notice.image_path.startswith('data:') %}{{ notice.image_path }}{% else %}{{ url_for('static', filename=notice.image_path) }}{% endif %}" target="_blank" rel="noopener">View attached image</a>
                     {% endif %}
                     <small>{{ notice.created_at }}</small>
                 </div>

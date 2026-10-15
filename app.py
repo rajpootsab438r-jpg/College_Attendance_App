@@ -2,6 +2,7 @@ import os
 import sqlite3
 import threading
 import json
+import base64
 import hmac
 import html
 import re
@@ -735,7 +736,7 @@ def delete_notification(notice_id):
         if conn is not None:
             conn.close()
 
-    if image_path:
+    if image_path and not str(image_path).lower().startswith('data:'):
         relative_path = str(image_path).replace('\\', '/')
         path_parts = relative_path.split('/')
         if relative_path.startswith('/') or any(part in {'', '.', '..'} for part in path_parts):
@@ -781,30 +782,34 @@ def admin_broadcast_message():
     if len(message) > 4096:
         return jsonify({'status': 'error', 'message': 'Announcements must be 4,096 characters or fewer.'}), 400
 
-    image_file = request.files.get('broadcast_image')
-    image_path = None
-    saved_image_path = None
-    if image_file and image_file.filename:
-        safe_original_name = secure_filename(image_file.filename)
+    broadcast_image = request.files.get('broadcast_image')
+    image_data_uri = None
+    if broadcast_image and broadcast_image.filename:
+        safe_original_name = secure_filename(broadcast_image.filename)
         extension = os.path.splitext(safe_original_name)[1].lower()
-        if not safe_original_name or extension not in {
-            '.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.bmp', '.tif', '.tiff', '.ico'
-        }:
+        allowed_image_types = {
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
+            'image/bmp', 'image/tiff', 'image/x-icon', 'image/vnd.microsoft.icon'
+        }
+        content_type = (broadcast_image.content_type or '').lower().split(';', 1)[0].strip()
+        if (
+            not safe_original_name
+            or extension not in {
+                '.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif',
+                '.bmp', '.tif', '.tiff', '.ico'
+            }
+            or content_type not in allowed_image_types
+        ):
             return jsonify({'status': 'error', 'message': 'Choose a supported raster image format.'}), 400
-        filename = secure_filename(f'{secrets.token_hex(16)}_{safe_original_name}')
-        image_path = os.path.join('uploads', 'broadcasts', filename).replace(os.sep, '/')
-        saved_image_path = os.path.join(STATIC_DIR, *image_path.split('/'))
         try:
-            os.makedirs(os.path.dirname(saved_image_path), exist_ok=True)
-            with open(saved_image_path, 'wb') as image_destination:
-                while True:
-                    image_chunk = image_file.stream.read(64 * 1024)
-                    if not image_chunk:
-                        break
-                    image_destination.write(image_chunk)
+            image_bytes = broadcast_image.read()
         except OSError:
-            app.logger.exception('Could not save the uploaded global announcement image.')
-            return jsonify({'status': 'error', 'message': 'The announcement image could not be saved.'}), 500
+            app.logger.exception('Could not read the uploaded global announcement image.')
+            return jsonify({'status': 'error', 'message': 'The announcement image could not be read.'}), 400
+        if not image_bytes:
+            return jsonify({'status': 'error', 'message': 'The uploaded announcement image is empty.'}), 400
+        encoded_string = base64.b64encode(image_bytes).decode('utf-8')
+        image_data_uri = f'data:{content_type};base64,{encoded_string}'
 
     conn = None
     try:
@@ -812,17 +817,14 @@ def admin_broadcast_message():
         cursor = conn.cursor()
         cursor.execute(
             'INSERT INTO global_notifications (message, image_path, college_id) VALUES (%s, %s, %s)',
-            (message, image_path, session['user_id'])
+            (message, image_data_uri, session['user_id'])
         )
         conn.commit()
         return jsonify({'status': 'success', 'message': 'Global announcement published.'})
     except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        if conn is not None:
+            conn.rollback()
         app.logger.exception('Could not publish the global announcement.')
-        if saved_image_path and os.path.exists(saved_image_path):
-            try:
-                os.remove(saved_image_path)
-            except OSError:
-                app.logger.exception('Could not remove an image from a failed global announcement.')
         return jsonify({'status': 'error', 'message': 'The global announcement could not be saved.'}), 503
     finally:
         if conn is not None:
@@ -1750,7 +1752,12 @@ def developer_dashboard():
         + safe_value(row['college_name'])
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;white-space:pre-wrap;'>"
         + safe_value(row['message'])
-        + ("<br><a href='/static/" + safe_value(row['image_path'])
+        + ("<br><a href='"
+           + (
+               safe_value(row['image_path'])
+               if str(row['image_path']).lower().startswith('data:')
+               else '/static/' + safe_value(row['image_path'])
+           )
            + "' target='_blank' rel='noopener'>View attachment</a>"
            if row['image_path'] else '')
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"

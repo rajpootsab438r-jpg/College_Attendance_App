@@ -209,6 +209,9 @@ def setup_database():
                     "ALTER TABLE global_notifications ADD COLUMN IF NOT EXISTS "
                     "college_id INTEGER REFERENCES admins(id) ON DELETE SET NULL"
                 )
+                cursor.execute(
+                    "ALTER TABLE global_notifications ALTER COLUMN image_path TYPE TEXT"
+                )
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS developer_releases (
                     id SERIAL PRIMARY KEY,
