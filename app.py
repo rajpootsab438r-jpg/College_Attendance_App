@@ -385,10 +385,16 @@ def build_whatsapp_absence_payload(student, period_no, attendance_date, college_
 
 
 def dispatch_whatsapp_alert(payload):
+    if not isinstance(payload, dict):
+        app.logger.error("WhatsApp attendance alert was not sent because its payload is invalid.")
+        return 'gateway_error'
+
     recipient_data = payload.get('recipient')
     message_data = payload.get('message')
     if not isinstance(recipient_data, dict) or not isinstance(message_data, dict):
-        app.logger.error("WhatsApp attendance alert was not sent because its recipient or message data is invalid.")
+        app.logger.error(
+            "WhatsApp attendance alert was not sent because its recipient or message data is invalid."
+        )
         return 'gateway_error'
 
     recipient = normalize_meta_recipient(recipient_data.get('phone_number'))
@@ -400,7 +406,9 @@ def dispatch_whatsapp_alert(payload):
 
     message_text = message_data.get('text')
     if not isinstance(message_text, str) or not message_text.strip():
-        app.logger.error("WhatsApp attendance alert was not sent because its text body is invalid.")
+        app.logger.error(
+            "WhatsApp attendance alert was not sent because its text body is invalid."
+        )
         return 'gateway_error'
 
     request_payload = {
@@ -412,14 +420,15 @@ def dispatch_whatsapp_alert(payload):
         'Content-Type': 'application/json',
         'Accept': 'application/json'
     }
+
     try:
-        gateway_request = Request(
+        outbound_request = Request(
             'https://railway.app',
             data=json.dumps(request_payload).encode('utf-8'),
             headers=headers,
             method='POST'
         )
-        with urlopen(gateway_request, timeout=5) as response:
+        with urlopen(outbound_request, timeout=5) as response:
             if response.status not in {200, 201}:
                 app.logger.error(
                     "WhatsApp cloud gateway rejected an attendance alert with HTTP %s.",
