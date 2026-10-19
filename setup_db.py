@@ -55,6 +55,7 @@ def setup_database():
     if database_url.startswith("sqlite"):
         conn = sqlite3.connect(get_local_db_path())
         try:
+            conn.execute("PRAGMA foreign_keys = ON")
             with conn:
                 conn.execute("CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, college_name TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, total_periods INTEGER DEFAULT 6)")
                 admin_columns = {
@@ -69,8 +70,8 @@ def setup_database():
                         "INSERT INTO developer_accounts (username, password) VALUES (?, ?)",
                         ("Cukur", generate_password_hash("Cukur301r"))
                     )
-                conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(teacher_id, college_id))")
-                conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, profile_image TEXT, college_id INTEGER, UNIQUE(roll_no, college_id))")
+                conn.execute("CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher_id TEXT NOT NULL, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, subject TEXT NOT NULL, profile_image TEXT, college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE, UNIQUE(teacher_id, college_id))")
+                conn.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, roll_no TEXT NOT NULL, student_name TEXT NOT NULL, father_name TEXT NOT NULL, phone_number TEXT NOT NULL, program TEXT NOT NULL, part TEXT NOT NULL, profile_image TEXT, college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE, UNIQUE(roll_no, college_id))")
                 for table_name in ('teachers', 'students'):
                     columns = {
                         row[1] for row in
@@ -78,7 +79,7 @@ def setup_database():
                     }
                     if 'profile_image' not in columns:
                         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN profile_image TEXT")
-                conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, client_timestamp TEXT, college_id INTEGER)")
+                conn.execute("CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, student_roll TEXT, attendance_date TEXT, period_no INTEGER NOT NULL, status TEXT, marked_by TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, client_timestamp TEXT, college_id INTEGER REFERENCES admins(id) ON DELETE CASCADE, FOREIGN KEY (student_roll, college_id) REFERENCES students(roll_no, college_id) ON DELETE CASCADE)")
                 attendance_columns = {
                     row[1] for row in conn.execute("PRAGMA table_info(attendance)").fetchall()
                 }
@@ -108,6 +109,26 @@ def setup_database():
                 }
                 if 'image_data' not in release_columns:
                     conn.execute("ALTER TABLE developer_releases ADD COLUMN image_data TEXT")
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS admins_delete_cascade_legacy
+                    AFTER DELETE ON admins
+                    BEGIN
+                        DELETE FROM attendance WHERE college_id = OLD.id;
+                        DELETE FROM teachers WHERE college_id = OLD.id;
+                        DELETE FROM students WHERE college_id = OLD.id;
+                        UPDATE global_notifications SET college_id = NULL
+                        WHERE college_id = OLD.id;
+                    END;
+                """)
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS students_delete_cascade_legacy
+                    AFTER DELETE ON students
+                    BEGIN
+                        DELETE FROM attendance
+                        WHERE student_roll = OLD.roll_no
+                          AND college_id = OLD.college_id;
+                    END;
+                """)
                 conn.execute("CREATE TABLE IF NOT EXISTS academic_programs (program_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, level TEXT NOT NULL, parts TEXT NOT NULL)")
                 for program_key, display_name, level, parts in ACADEMIC_PROGRAM_SEEDS:
                     conn.execute(

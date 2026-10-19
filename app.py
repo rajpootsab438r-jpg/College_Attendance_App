@@ -7,8 +7,8 @@ import hmac
 import html
 import re
 import secrets
-from urllib.parse import urlparse
-from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_file, send_from_directory
+from urllib.parse import quote, urlparse
+from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, send_file, send_from_directory
 import psycopg2
 from psycopg2.extras import DictCursor
 from datetime import date, datetime, timedelta, timezone
@@ -47,6 +47,7 @@ class SQLiteCursorProxy:
 class SQLiteCompatConnection:
     def __init__(self, db_path):
         self._connection = sqlite3.connect(db_path)
+        self._connection.execute("PRAGMA foreign_keys = ON")
 
     def __getattr__(self, name):
         return getattr(self._connection, name)
@@ -139,6 +140,30 @@ def password_needs_hash_upgrade(stored_password):
     return not isinstance(stored_password, str) or not stored_password.startswith(
         ('scrypt:', 'pbkdf2:')
     )
+
+
+def upgrade_stored_password(table_name, account_id, stored_password, password):
+    if table_name not in {'admins', 'teachers', 'developer_accounts'}:
+        raise ValueError('Unsupported account table for password upgrade.')
+
+    upgraded_password = generate_password_hash(password)
+    conn = None
+    try:
+        conn = get_db_connection()
+        if not get_database_url().startswith('sqlite'):
+            conn.autocommit = True
+        cursor = conn.cursor()
+        cursor.execute(
+            f'UPDATE {table_name} SET password = %s WHERE id = %s AND password = %s',
+            (upgraded_password, account_id, stored_password)
+        )
+        if get_database_url().startswith('sqlite'):
+            conn.commit()
+    except (DatabaseConfigurationError, psycopg2.Error, sqlite3.Error):
+        app.logger.exception('Could not upgrade a legacy password hash.')
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def get_local_db_path():
@@ -250,6 +275,88 @@ def offline_sync_actor_matches(role, actor_id):
         return True
     expected_actor = f'{role}:{actor_id}'
     return request.headers.get('X-Sync-Actor') == expected_actor
+
+
+def session_account_is_current(role):
+    user_id = session.get('user_id')
+    username = session.get('user')
+    if not user_id or not isinstance(username, str) or not username:
+        return False
+
+    if role == 'admin':
+        query = 'SELECT 1 FROM admins WHERE id = %s AND username = %s'
+        params = (user_id, username)
+    elif role == 'teacher':
+        college_id = session.get('college_id')
+        if college_id is None:
+            return False
+        query = (
+            'SELECT 1 FROM teachers WHERE id = %s AND username = %s '
+            'AND college_id = %s'
+        )
+        params = (user_id, username, college_id)
+    else:
+        return False
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def json_request_security_error():
+    if not request.is_json:
+        return sync_json_response(
+            'error', 415, message='This endpoint requires a JSON request.'
+        )
+
+    fetch_site = request.headers.get('Sec-Fetch-Site', '').casefold()
+    if fetch_site and fetch_site not in {'same-origin', 'none'}:
+        return sync_json_response(
+            'error', 403, message='Cross-origin requests are not permitted.'
+        )
+
+    origin = request.headers.get('Origin')
+    if origin:
+        parsed_origin = urlparse(origin)
+        if (
+            parsed_origin.scheme not in {'http', 'https'}
+            or not parsed_origin.netloc
+            or parsed_origin.path
+            or parsed_origin.params
+            or parsed_origin.query
+            or parsed_origin.fragment
+            or parsed_origin.netloc.casefold() != request.host.casefold()
+        ):
+            return sync_json_response(
+                'error', 403, message='Cross-origin requests are not permitted.'
+            )
+    return None
+
+
+def safe_image_url(image_value):
+    if not isinstance(image_value, str) or not image_value:
+        return ''
+    if image_value.lower().startswith('data:'):
+        if re.fullmatch(
+            r'data:image/(?:jpeg|png|gif|webp|avif|bmp|tiff|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/]*={0,2}',
+            image_value,
+            re.IGNORECASE
+        ):
+            return image_value
+        return ''
+
+    relative_path = image_value.replace('\\', '/')
+    parts = relative_path.split('/')
+    if (
+        relative_path.startswith('/')
+        or any(part in {'', '.', '..'} for part in parts)
+    ):
+        return ''
+    return '/static/' + '/'.join(quote(part, safe='') for part in parts)
 
 
 def sync_json_response(status='success', http_status=200, **payload):
@@ -736,7 +843,11 @@ def delete_notification(notice_id):
         if conn is not None:
             conn.close()
 
-    if image_path and not str(image_path).lower().startswith('data:'):
+    if (
+        image_path
+        and not str(image_path).lower().startswith('data:')
+        and os.environ.get('VERCEL') != '1'
+    ):
         relative_path = str(image_path).replace('\\', '/')
         path_parts = relative_path.split('/')
         if relative_path.startswith('/') or any(part in {'', '.', '..'} for part in path_parts):
@@ -973,17 +1084,18 @@ def login(role):
             user = cursor.fetchone()
             if user and verify_stored_password(user['password'], password):
                 if password_needs_hash_upgrade(user['password']):
-                    cursor.execute(
-                        'UPDATE admins SET password = %s WHERE id = %s',
-                        (generate_password_hash(password), user['id'])
+                    conn.close()
+                    conn = None
+                    upgrade_stored_password(
+                        'admins', user['id'], user['password'], password
                     )
-                    conn.commit()
                 session['role'] = 'admin'
                 session['user_id'] = user['id']
                 session['user'] = user['username']
                 session['college_name'] = user['college_name']
                 session['admin_name'] = user['display_name'] or user['college_name']
-                conn.close()
+                if conn is not None:
+                    conn.close()
                 if wants_json:
                     return jsonify({
                         'status': 'success',
@@ -996,18 +1108,19 @@ def login(role):
             user = cursor.fetchone()
             if user and verify_stored_password(user['password'], password):
                 if password_needs_hash_upgrade(user['password']):
-                    cursor.execute(
-                        'UPDATE teachers SET password = %s WHERE id = %s',
-                        (generate_password_hash(password), user['id'])
+                    conn.close()
+                    conn = None
+                    upgrade_stored_password(
+                        'teachers', user['id'], user['password'], password
                     )
-                    conn.commit()
                 session['role'] = 'teacher'
                 session['user_id'] = user['id']
                 session['user'] = user['username']
                 session['teacher_name'] = user['name']
                 session['subject'] = user['subject']
                 session['college_id'] = user['college_id']
-                conn.close()
+                if conn is not None:
+                    conn.close()
                 if wants_json:
                     return jsonify({
                         'status': 'success',
@@ -1020,15 +1133,16 @@ def login(role):
             user = cursor.fetchone()
             if user and verify_stored_password(user['password'], password):
                 if password_needs_hash_upgrade(user['password']):
-                    cursor.execute(
-                        'UPDATE developer_accounts SET password = %s WHERE id = %s',
-                        (generate_password_hash(password), user['id'])
+                    conn.close()
+                    conn = None
+                    upgrade_stored_password(
+                        'developer_accounts', user['id'], user['password'], password
                     )
-                    conn.commit()
                 session['role'] = 'developer'
                 session['user_id'] = user['id']
                 session['user'] = user['username']
-                conn.close()
+                if conn is not None:
+                    conn.close()
                 if wants_json:
                     return jsonify({
                         'status': 'success',
@@ -1037,7 +1151,8 @@ def login(role):
                     })
                 return redirect(url_for('developer_dashboard'))
                 
-        conn.close()
+        if conn is not None:
+            conn.close()
         if wants_json:
             return jsonify({'status': 'error', 'message': 'Invalid credentials. Please try again.'}), 401
         return "<h3>Invalid Credentials! Please try again.</h3>"
@@ -1431,16 +1546,28 @@ def import_students():
         return jsonify({"error": "Unauthorized"}), 401
     if not offline_sync_actor_matches('admin', session.get('user_id')):
         return sync_json_response('error', 403, message='Queued action belongs to a different admin account.')
+    if not session_account_is_current('admin'):
+        return sync_json_response('error', 403, message='This admin session is no longer valid.')
+    security_error = json_request_security_error()
+    if security_error:
+        return security_error
 
     payload = request.get_json()
+    if not isinstance(payload, dict) or set(payload) != {'rows'}:
+        return sync_json_response('error', 400, message='Expected a JSON object containing student rows only.')
     rows = payload.get('rows') if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows or len(rows) > 500:
         return jsonify({"error": "Provide between 1 and 500 student rows."}), 400
 
     clean_rows = []
+    allowed_fields = {
+        'roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part'
+    }
     for row_number, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             return jsonify({"error": f"Row {row_number} is invalid."}), 400
+        if set(row) - allowed_fields:
+            return jsonify({"error": f"Row {row_number} contains unsupported fields."}), 400
         fields = {}
         for field in ('roll_no', 'student_name', 'father_name', 'phone_number', 'program', 'part'):
             value = row.get(field, '')
@@ -1693,9 +1820,55 @@ def developer_dashboard():
         edit_s_data = cursor.fetchone()
         
     safe_value = lambda value: html.escape(str(value or ''), quote=True)
-    college_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['id']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><a href='/developer/dashboard?filter_college={c['id']}' style='color:#146c43;font-weight:bold;text-decoration:none;'>{safe_value(c['college_name'])} 🔍</a></td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(c['display_name'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(c['username'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{c['total_periods']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_c={c['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/college/{c['id']}' onsubmit='return confirm(\"Delete Account Master?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for c in colleges])
-    teacher_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['college_name'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{safe_value(t['teacher_id'])}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['name'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['username'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{safe_value(t['subject'])}</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_t={t['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/teacher/{t['id']}' onsubmit='return confirm(\"Delete Teacher?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for t in all_teachers])
-    student_rows = "".join([f"<tr><td style='border:1px solid #a3cfbb;padding:12px;'>{s['college_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'><b>{s['roll_no']}</b></td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['student_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['father_name']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['phone_number']}</td><td style='border:1px solid #a3cfbb;padding:12px;'>{s['program']} ({s['part']})</td><td style='border:1px solid #a3cfbb;padding:12px;'><div style='display:flex;gap:6px;align-items:center;'><a href='/developer/dashboard?edit_s={s['id']}' style='background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;'>📝</a><form method='POST' action='/developer/delete/student/{s['id']}' onsubmit='return confirm(\"Delete Student?\")'><button type='submit' style='color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;'>Delete ❌</button></form></div></td></tr>" for s in all_students])
+    college_rows = render_template_string(
+        """{% autoescape true %}{% for c in colleges %}
+        <tr>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><b>{{ c['id'] }}</b></td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><a href="/developer/dashboard?filter_college={{ c['id'] }}" style="color:#146c43;font-weight:bold;text-decoration:none;">{{ c['college_name'] }} 🔍</a></td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ c['display_name'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ c['username'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><b>{{ c['total_periods'] }}</b></td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><div style="display:flex;gap:6px;align-items:center;">
+                <a href="/developer/dashboard?edit_c={{ c['id'] }}" style="background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;">📝</a>
+                <form method="POST" action="/developer/delete/college/{{ c['id'] }}" onsubmit="return confirm('Delete Account Master?')"><button type="submit" style="color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;">Delete ❌</button></form>
+            </div></td>
+        </tr>
+        {% endfor %}{% endautoescape %}""",
+        colleges=colleges
+    )
+    teacher_rows = render_template_string(
+        """{% autoescape true %}{% for t in teachers %}
+        <tr>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ t['college_name'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><b>{{ t['teacher_id'] }}</b></td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ t['name'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ t['username'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ t['subject'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><div style="display:flex;gap:6px;align-items:center;">
+                <a href="/developer/dashboard?edit_t={{ t['id'] }}" style="background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;">📝</a>
+                <form method="POST" action="/developer/delete/teacher/{{ t['id'] }}" onsubmit="return confirm('Delete Teacher?')"><button type="submit" style="color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;">Delete ❌</button></form>
+            </div></td>
+        </tr>
+        {% endfor %}{% endautoescape %}""",
+        teachers=all_teachers
+    )
+    student_rows = render_template_string(
+        """{% autoescape true %}{% for s in students %}
+        <tr>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ s['college_name'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><b>{{ s['roll_no'] }}</b></td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ s['student_name'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ s['father_name'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ s['phone_number'] }}</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;">{{ s['program'] }} ({{ s['part'] }})</td>
+            <td style="border:1px solid #a3cfbb;padding:12px;"><div style="display:flex;gap:6px;align-items:center;">
+                <a href="/developer/dashboard?edit_s={{ s['id'] }}" style="background:#198754;color:white;padding:5px 10px;border-radius:4px;font-weight:bold;font-size:12px;text-decoration:none;">📝</a>
+                <form method="POST" action="/developer/delete/student/{{ s['id'] }}" onsubmit="return confirm('Delete Student?')"><button type="submit" style="color:#dc3545;background:none;border:0;padding:0;font-weight:bold;font-size:12px;">Delete ❌</button></form>
+            </div></td>
+        </tr>
+        {% endfor %}{% endautoescape %}""",
+        students=all_students
+    )
 
     edit_box = ""
     if edit_c_data:
@@ -1731,7 +1904,24 @@ def developer_dashboard():
             "</form></div>"
         )
     elif edit_s_data:
-        edit_box = f"<div style='background:#d1e7dd; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #badbcc;'><h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Student Record</h4><form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'><input type='hidden' name='action' value='update_student_dev'><input type='hidden' name='id' value='{edit_s_data['id']}'><input type='text' name='roll_no' value='{edit_s_data['roll_no']}' placeholder='Roll' style='width:120px;'><input type='text' name='student_name' value='{edit_s_data['student_name']}' placeholder='Name'><input type='text' name='father_name' value='{edit_s_data['father_name']}' placeholder='Father'><input type='text' name='phone_number' value='{edit_s_data['phone_number']}' placeholder='Phone'><input type='text' name='program' value='{edit_s_data['program']}' placeholder='Program'><input type='text' name='part' value='{edit_s_data['part']}' placeholder='Part'><button type='submit' style='width:auto;background:#198754;'>Save Updates</button><a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;display:flex;align-items:center;'>Cancel</a></form></div>"
+        edit_box = (
+            "<div style='background:#d1e7dd;padding:20px;border-radius:8px;"
+            "margin-bottom:20px;border:1px solid #badbcc;'>"
+            "<h4 style='margin:0 0 10px 0;color:#0f5132;'>📝 Edit Student Record</h4>"
+            "<form method='POST' style='display:flex;gap:10px;flex-wrap:wrap;'>"
+            "<input type='hidden' name='action' value='update_student_dev'>"
+            f"<input type='hidden' name='id' value='{int(edit_s_data['id'])}'>"
+            f"<input type='text' name='roll_no' value='{safe_value(edit_s_data['roll_no'])}' placeholder='Roll' style='width:120px;'>"
+            f"<input type='text' name='student_name' value='{safe_value(edit_s_data['student_name'])}' placeholder='Name'>"
+            f"<input type='text' name='father_name' value='{safe_value(edit_s_data['father_name'])}' placeholder='Father'>"
+            f"<input type='text' name='phone_number' value='{safe_value(edit_s_data['phone_number'])}' placeholder='Phone'>"
+            f"<input type='text' name='program' value='{safe_value(edit_s_data['program'])}' placeholder='Program'>"
+            f"<input type='text' name='part' value='{safe_value(edit_s_data['part'])}' placeholder='Part'>"
+            "<button type='submit' style='width:auto;background:#198754;'>Save Updates</button>"
+            "<a href='/developer/dashboard' style='background:#6c757d;color:white;padding:10px 15px;"
+            "border-radius:4px;text-decoration:none;font-weight:bold;font-size:13px;"
+            "display:flex;align-items:center;'>Cancel</a></form></div>"
+        )
     developer_profile_box = (
         "<div class='card full-width'><h3>🔐 Developer Profile</h3>"
         "<form method='POST' action='/developer/dashboard' data-no-offline-queue='true'>"
@@ -1752,14 +1942,11 @@ def developer_dashboard():
         + safe_value(row['college_name'])
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;white-space:pre-wrap;'>"
         + safe_value(row['message'])
-        + ("<br><a href='"
-           + (
-               safe_value(row['image_path'])
-               if str(row['image_path']).lower().startswith('data:')
-               else '/static/' + safe_value(row['image_path'])
-           )
-           + "' target='_blank' rel='noopener'>View attachment</a>"
-           if row['image_path'] else '')
+        + (
+            "<br><a href='" + safe_value(safe_image_url(row['image_path']))
+            + "' target='_blank' rel='noopener'>View attachment</a>"
+            if safe_image_url(row['image_path']) else ''
+        )
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
         + safe_value(row['created_at'])
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
@@ -1790,9 +1977,9 @@ def developer_dashboard():
         + safe_value(row['message'])
         + "</p>"
         + (
-            "<img src='" + safe_value(row['image_data'])
+            "<img src='" + safe_value(safe_image_url(row['image_data']))
             + "' alt='Release attachment' style='display:block;max-width:220px;max-height:160px;object-fit:contain;'>"
-            if row['image_data'] else ''
+            if safe_image_url(row['image_data']) else ''
         )
         + "</td><td style='border:1px solid #a3cfbb;padding:12px;'>"
         + safe_value(row['created_at'])
@@ -2352,9 +2539,22 @@ def quick_attendance():
         return sync_json_response('error', 401, message='Unauthorized.')
     if not offline_sync_actor_matches('teacher', session.get('user_id')):
         return sync_json_response('error', 403, message='Queued action belongs to a different teacher account.')
+    if not session_account_is_current('teacher'):
+        return sync_json_response('error', 403, message='This teacher session is no longer valid.')
+    security_error = json_request_security_error()
+    if security_error:
+        return security_error
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return sync_json_response('error', 400, message='Expected a JSON attendance record.')
+    allowed_fields = {
+        'roll', 'student_id', 'status', 'date', 'period', 'client_timestamp',
+        'marked_at'
+    }
+    if set(data) - allowed_fields:
+        return sync_json_response(
+            'error', 400, message='The attendance record contains unsupported fields.'
+        )
     roll = data.get('roll')
     status = data.get('status') 
     att_date = data.get('date')
@@ -2371,7 +2571,7 @@ def quick_attendance():
     client_timestamp_db = client_timestamp.isoformat(timespec='microseconds')
     if not isinstance(roll, str) or not roll.strip():
         return sync_json_response('error', 400, message='A student roll number is required.')
-    if status not in {'Present', 'Absent', 'Leave', 'Vacation'}:
+    if not isinstance(status, str) or status not in {'Present', 'Absent', 'Leave', 'Vacation'}:
         return sync_json_response('error', 400, message='Unsupported attendance status.')
     if not isinstance(att_date, str) or not att_date:
         return sync_json_response('error', 400, message='An attendance date is required.')
