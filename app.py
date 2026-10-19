@@ -414,7 +414,7 @@ def dispatch_whatsapp_alert(payload):
     }
     try:
         gateway_request = Request(
-            'https://onrender.com',
+            'https://railway.app',
             data=json.dumps(request_payload).encode('utf-8'),
             headers=headers,
             method='POST'
@@ -2904,6 +2904,3 @@ def logout():
     return redirect('/')
 
 application = app
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
