@@ -14,7 +14,7 @@ from psycopg2.extras import DictCursor
 from datetime import date, datetime, timedelta, timezone
 import io
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -385,23 +385,13 @@ def build_whatsapp_absence_payload(student, period_no, attendance_date, college_
 
 
 def dispatch_whatsapp_alert(payload):
-    phone_number_id = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '').strip()
-    access_token = os.environ.get('WHATSAPP_PERMANENT_ACCESS_TOKEN', '').strip()
-    if not phone_number_id or not access_token:
-        app.logger.warning(
-            "WhatsApp attendance alert was not sent; WHATSAPP_PHONE_NUMBER_ID "
-            "and/or WHATSAPP_PERMANENT_ACCESS_TOKEN is not configured."
-        )
-        return 'not_configured'
-
     recipient_data = payload.get('recipient')
     message_data = payload.get('message')
     if not isinstance(recipient_data, dict) or not isinstance(message_data, dict):
         app.logger.error("WhatsApp attendance alert was not sent because its recipient or message data is invalid.")
         return 'gateway_error'
 
-    recipient_phone = recipient_data.get('phone_number')
-    recipient = normalize_meta_recipient(recipient_phone)
+    recipient = normalize_meta_recipient(recipient_data.get('phone_number'))
     if recipient is None:
         app.logger.warning(
             "WhatsApp attendance alert was not sent because the student has no valid parent phone number."
@@ -413,59 +403,32 @@ def dispatch_whatsapp_alert(payload):
         app.logger.error("WhatsApp attendance alert was not sent because its text body is invalid.")
         return 'gateway_error'
 
-    if not re.fullmatch(r'\d+', phone_number_id):
-        app.logger.error("WhatsApp attendance alert was not sent because the configured phone number ID is invalid.")
-        return 'gateway_error'
-
-    api_version = os.environ.get('WHATSAPP_API_VERSION', 'v23.0').strip()
-    if not re.fullmatch(r'v\d+\.\d+', api_version):
-        app.logger.error("WhatsApp attendance alert was not sent because WHATSAPP_API_VERSION is invalid.")
-        return 'gateway_error'
-
-    endpoint_url = (
-        f'https://graph.facebook.com/{api_version}/'
-        f'{phone_number_id}/messages'
-    )
     request_payload = {
-        'messaging_product': 'whatsapp',
-        'recipient_type': 'individual',
-        'to': recipient,
-        'type': 'text',
-        'text': {
-            'preview_url': False,
-            'body': message_text
-        }
+        'chatId': f'{recipient}@c.us',
+        'text': message_text,
+        'session': 'default'
     }
     headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
     }
     try:
         gateway_request = Request(
-            endpoint_url,
+            'https://onrender.com',
             data=json.dumps(request_payload).encode('utf-8'),
             headers=headers,
             method='POST'
         )
         with urlopen(gateway_request, timeout=5) as response:
-            if not 200 <= response.status < 300:
+            if response.status not in {200, 201}:
                 app.logger.error(
-                    "Meta WhatsApp API rejected an attendance alert with HTTP %s.",
+                    "WhatsApp cloud gateway rejected an attendance alert with HTTP %s.",
                     response.status
                 )
                 return 'gateway_error'
         return 'sent'
-    except HTTPError as error:
-        error_body = error.read().decode('utf-8', errors='replace')
-        print(error_body)
-        app.logger.error(
-            "Meta WhatsApp API returned HTTP %s for an attendance alert: %s",
-            error.code,
-            error_body
-        )
-        return 'gateway_error'
     except (URLError, TimeoutError, OSError, TypeError, ValueError) as error:
-        app.logger.error("Meta WhatsApp attendance alert delivery failed: %s", error)
+        app.logger.error("WhatsApp cloud alert delivery failed: %s", error)
         return 'gateway_error'
 
 
