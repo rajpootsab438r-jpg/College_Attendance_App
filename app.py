@@ -14,7 +14,7 @@ from psycopg2.extras import DictCursor
 from datetime import date, datetime, timedelta, timezone
 import io
 from urllib.request import Request, urlopen
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -397,7 +397,13 @@ def dispatch_whatsapp_alert(payload):
         )
         return 'gateway_error'
 
-    recipient = normalize_meta_recipient(recipient_data.get('phone_number'))
+    try:
+        recipient = normalize_meta_recipient(recipient_data.get('phone_number'))
+    except ValueError:
+        app.logger.exception(
+            "WhatsApp attendance alert was not sent because recipient normalization is misconfigured."
+        )
+        return 'gateway_error'
     if recipient is None:
         app.logger.warning(
             "WhatsApp attendance alert was not sent because the student has no valid parent phone number."
@@ -411,33 +417,60 @@ def dispatch_whatsapp_alert(payload):
         )
         return 'gateway_error'
 
+    PHONE_NUMBER_ID = "1382071054992584"
+    ACCESS_TOKEN = os.environ.get('WHATSAPP_ACCESS_TOKEN', '').strip()
+    graph_api_version = os.environ.get('WHATSAPP_GRAPH_API_VERSION', 'v23.0').strip()
+    if not ACCESS_TOKEN:
+        app.logger.error(
+            "WhatsApp attendance alert was not sent because WHATSAPP_ACCESS_TOKEN is not configured."
+        )
+        return 'gateway_error'
+    if not re.fullmatch(r'v\d+\.\d+', graph_api_version):
+        app.logger.error(
+            "WhatsApp attendance alert was not sent because WHATSAPP_GRAPH_API_VERSION is invalid."
+        )
+        return 'gateway_error'
+
     request_payload = {
-        'chatId': f'{recipient}@c.us',
-        'text': message_text,
-        'session': 'default'
+        'messaging_product': 'whatsapp',
+        'recipient_type': 'individual',
+        'to': recipient,
+        'type': 'text',
+        'text': {
+            'preview_url': False,
+            'body': message_text
+        }
     }
     headers = {
+        'Authorization': f'Bearer {ACCESS_TOKEN}',
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
     }
 
     try:
         outbound_request = Request(
-            'https://railway.app',
+            f'https://graph.facebook.com/{graph_api_version}/{PHONE_NUMBER_ID}/messages',
             data=json.dumps(request_payload).encode('utf-8'),
             headers=headers,
             method='POST'
         )
         with urlopen(outbound_request, timeout=5) as response:
-            if response.status not in {200, 201}:
+            if response.status < 200 or response.status >= 300:
                 app.logger.error(
-                    "WhatsApp cloud gateway rejected an attendance alert with HTTP %s.",
+                    "Meta WhatsApp API rejected an attendance alert with HTTP %s.",
                     response.status
                 )
                 return 'gateway_error'
         return 'sent'
+    except HTTPError as error:
+        error_body = error.read().decode('utf-8', errors='replace')
+        app.logger.error(
+            "Meta WhatsApp API rejected an attendance alert with HTTP %s: %s",
+            error.code,
+            error_body
+        )
+        return 'gateway_error'
     except (URLError, TimeoutError, OSError, TypeError, ValueError) as error:
-        app.logger.error("WhatsApp cloud alert delivery failed: %s", error)
+        app.logger.error("Meta WhatsApp alert delivery failed: %s", error)
         return 'gateway_error'
 
 
@@ -1812,7 +1845,10 @@ def developer_dashboard():
         if is_offline_sync_request():
             conn.close()
             return sync_json_response()
-    cursor.execute('SELECT * FROM admins ORDER BY id DESC')
+    cursor.execute(
+        'SELECT id, college_name, display_name, username, total_periods '
+        'FROM admins ORDER BY id DESC'
+    )
     colleges = cursor.fetchall()
     selected_college_id = request.args.get('filter_college')
     
@@ -1829,7 +1865,11 @@ def developer_dashboard():
 
     edit_c_data = None
     if request.args.get('edit_c'):
-        cursor.execute('SELECT * FROM admins WHERE id=%s', (request.args.get('edit_c'),))
+        cursor.execute(
+            'SELECT id, college_name, display_name, username, total_periods '
+            'FROM admins WHERE id=%s',
+            (request.args.get('edit_c'),)
+        )
         edit_c_data = cursor.fetchone()
     edit_t_data = None
     if request.args.get('edit_t'):
