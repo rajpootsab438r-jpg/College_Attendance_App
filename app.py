@@ -786,6 +786,37 @@ def native_chat():
             conn.close()
 
 
+@app.route('/api/webhook', methods=['GET', 'POST'])
+def whatsapp_webhook():
+    if request.method == 'GET':
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        verify_token = os.environ.get('META_VERIFY_TOKEN', '').strip()
+
+        if not verify_token:
+            app.logger.error('Meta Webhook verification failed: META_VERIFY_TOKEN is not configured.')
+            return 'Verification is not configured', 503
+        if (
+            mode == 'subscribe'
+            and token is not None
+            and hmac.compare_digest(token, verify_token)
+            and challenge is not None
+        ):
+            app.logger.info('Meta Webhook successfully verified.')
+            return challenge, 200
+
+        app.logger.warning('Meta Webhook verification failed.')
+        return 'Verification Failed', 403
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'status': 'error', 'message': 'No valid JSON payload received'}), 400
+
+    app.logger.info('Received WhatsApp Webhook event payload.')
+    return jsonify({'status': 'success', 'message': 'Event received'}), 200
+
+
 @app.route('/api/global_notice', methods=['GET'])
 def latest_global_notice():
     conn = None
